@@ -321,7 +321,7 @@ class pyNBED:
         Returns:
 
         1-D array res, each element represents a coordinate with 
-        res=res // self.dim[0] + res % self.dim[0]
+        res=res // self.dim[1] + res % self.dim[1]
         the x-coordinate is res // self.dim[1]  
         the y-coordinate is res % self.dim[1]
         the row is equivalent with the x coordinate, i.e. the vertical coordinate in Python 
@@ -339,6 +339,7 @@ class pyNBED:
                 l.append(rows[i]*self.dim[1]+cols[i])                 
         return np.array(l)
 
+    
     def PreparePeakDetectionPars(self, shortcut=None):
         """ Returns a dictionary with preset parameters for peak detection
 
