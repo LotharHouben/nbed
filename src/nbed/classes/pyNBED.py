@@ -526,7 +526,7 @@ class pyNBED:
         conv_kernel=1./9*np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
         # overwrite with self.peakdetpar
         # return table
-        img=self.data[idxarray[0]//self.dim[0],idxarray[0] % self.dim[0],:,:]
+        img=self.data[idxarray[0]//self.dim[1],idxarray[0] % self.dim[1],:,:]
         if params["frame_cutoff"] > 0.:
             img[img < params["frame_cutoff"]]=0.
         else:
@@ -543,8 +543,8 @@ class pyNBED:
         # TQDM AND ANIMATED VIEW DON'T WORK WELL TOGETHER
         if animate:
             for ind in idxarray:  
-                i=ind // self.dim[0]
-                j=ind % self.dim[0]
+                i=ind // self.dim[1]
+                j=ind % self.dim[1]
                 if conv2D:
                     filtim=convolve2D(self.data[i,j,::], conv_kernel, padding=2)
                 else:
@@ -581,8 +581,8 @@ class pyNBED:
                     time.sleep(0.001)
         else:
             for ind in tqdm(idxarray,desc='Processing Frames '):  
-                i=ind // self.dim[0]
-                j=ind % self.dim[0]
+                i=ind // self.dim[1]
+                j=ind % self.dim[1]
                 if conv2D:
                     filtim=convolve2D(self.data[i,j,::], conv_kernel, padding=2)
                 else:
