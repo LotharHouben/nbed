@@ -42,6 +42,8 @@ You can now import nbed, create an instance of the nbed class and dosplay the do
 
 ## Documentation
 
-Please refer to the jupyter notebooks with examples in the directory 'examples at 
+Please refer to the jupyter notebooks with examples in the directory 'examples' at 
 
-    https://github.com/LotharHouben/nbed 
+    https://github.com/LotharHouben/nbed/examples
+
+The notebooks use a demonstration data set that is available under https://doi.org/10.5281/zenodo.15212905 
