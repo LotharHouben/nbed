@@ -2,6 +2,7 @@ import numpy as np
 import numpy.matlib
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+import os
 
 def Parabola2D(x, c0, c1, c2,c3,c4,c5):
     """ Second-order polynomial function in 2D 
