@@ -552,7 +552,8 @@ class pyNBED:
                 else:
                     filtim=self.data[i,j,::]   
                 # filtim=img
-                scale=cmax/np.max(img) 
+                scale=cmax/np.max(img)
+                filtim[filtim < 0]=0.
                 dispim=bytscl(np.log(filtim+1.),vmin=params["frame_cmin"], vmax=params["frame_cmax"])
                 plt.imshow(dispim,cmap='gray_r',origin="lower")
                 # detect on linear scale
