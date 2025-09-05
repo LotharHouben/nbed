@@ -79,14 +79,15 @@ class pyNBED:
             self.PrepareSamplingGrid()
         return
 
-    def ShowFrame(self, i=None,j=None, Log=None, sd=3):
+    def ShowFrame(self, i=None,j=None, Log=None, sd=3, minmax=None):
         """ Display a diffraction frame  
 
         Parameters:
         i,j:    spatial pixel indices [default: center of frame]
         Log:    display log scale image
         sd:     half the auto contrast cutoff range in factors of the standard deviation 
-
+        minmax: tuple t, if set then teh contrast is set between t[0], t[1]
+        
         Returns:
 
         None
@@ -111,9 +112,12 @@ class pyNBED:
             sdev=np.std(img)
             plt.imshow(img,vmin=0, vmax=mean+sd*sdev) 
         else:
-            mean=np.mean(img)
-            sdev=np.std(img)
-            plt.imshow(img,vmin=mean-sd*sdev, vmax=mean+sd*sdev) 
+            if minmax:
+                plt.imshow(img,vmin=minmax[0], vmax=minmax[1])
+            else:
+                mean=np.mean(img)
+                sdev=np.std(img)
+                plt.imshow(img,vmin=mean-sd*sdev, vmax=mean+sd*sdev) 
         plt.show()  # display it
         return np.copy(self.data[i,j,::])
 
@@ -457,7 +461,7 @@ class pyNBED:
             time.sleep(0.001)
         return
 
-    def PeakDetection(self, idxarray, params=None, animate=True, raw=False):        
+    def PeakDetection(self, idxarray, params=None, animate=True, raw=False, markers=True):        
  
         """ Auto-detect diffraction peaks in a set of frames      
         
@@ -468,6 +472,7 @@ class pyNBED:
         idxarray:   list of spatial pixel indices in linear order
         raw:        boolean, if true then the filtered raw data is used
                     if false the the fit is on the log scale
+        markers:    if false then peak markers are suppressed
         
         params:     dict with peak search parameters
                     
@@ -573,15 +578,16 @@ class pyNBED:
                     f=f.sort_values(by=['q'], ascending=True)
                     # add frame results to list
                     framepeaklist.append({'i': i,'j': j,'x':f['x'].values-halfframedim[0],'y':f['y'].values-halfframedim[1],'q':f['q'].values,'mass':f['mass'].values,'size':f['size'].values,'raw_mass':f['raw_mass'].values})
-                    colors = np.random.rand(len(f))
-                    scat.remove()
-                    scat=plt.scatter(f.x, f.y, s=f.mass/2, c=colors, alpha=0.5)
-                    txt.remove()
-                    txt=plt.figtext(0.55, 0.8, "i,j;#peaks = "+str(i)+","+str(j)+";"+str(len(f)),fontsize = 12,color ="black") 
-                    #display.clear_output(wait=True)
-                    display.display(plt.gcf(),clear=True)
-                    display.clear_output(wait=True)
-                    time.sleep(0.001)
+                    if markers:
+                        colors = np.random.rand(len(f))
+                        scat.remove()
+                        scat=plt.scatter(f.x, f.y, s=f.mass/2, c=colors, alpha=0.5)
+                        txt.remove()
+                        txt=plt.figtext(0.55, 0.8, "i,j;#peaks = "+str(i)+","+str(j)+";"+str(len(f)),fontsize = 12,color ="black") 
+                        #display.clear_output(wait=True)
+                        display.display(plt.gcf(),clear=True)
+                        display.clear_output(wait=True)
+                        time.sleep(0.001)
         else:
             for ind in tqdm(idxarray,desc='Processing Frames '):  
                 i=ind // self.dim[1]
