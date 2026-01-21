@@ -26,7 +26,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14"
 ]
   
-dependencies = ["numpy>=1.26.4","matplotlib>=3.10.0","scipy>=1.15.2","pims>=0.7.0","tqdm>=4.67.1","IPython>=0.9.0","trackpy>=0.6.0"]
+dependencies = ["numpy>=1.26.4","matplotlib>=3.10.0","scipy>=1.15.2","pims>=0.7.0","tqdm>=4.67.1","IPython>=0.9.0","trackpy>=0.6.0", "mrcfile>=1.5.4"]
 
 [project.urls]
 Documentation = "https://github.com/LotharHouben/nbed#readme"

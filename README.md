@@ -4,8 +4,11 @@ nbed is a processing class for data reduction of nanodiffraction data. nbed help
 
 
 - aligning diffraction frames
+- binning in spatial and diffraction dimensions  
 - vectorization by peak detection
 - creating virtual images, pseudo Debye-Scherrer and powder patterns
+- creating centre of mass maps and orientation maps
+
 
 Currently, nbed supports direct import of PantaRhei .prz files (serialized python object format) and EMPAD .raw files. 
 

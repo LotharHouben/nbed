@@ -1,3 +1,4 @@
+
 import numpy as np
 import numpy.matlib
 import matplotlib.pyplot as plt
@@ -10,6 +11,8 @@ import os
 from tqdm import tqdm 
 from ..helpers import ParabolaFit2D,convolve2D,read_empad,bytscl
 import itertools
+from matplotlib.colors import hsv_to_rgb
+import mrcfile
 
 # A processing class for 4D-STEM nanodiffraction data
 
@@ -78,6 +81,77 @@ class pyNBED:
             print("pyNBED: array dimensions:", self.dim) 
             self.PrepareSamplingGrid()
         return
+
+    def FromArray(self, a):
+        """ Load a 4D STEM dataset from an array  
+
+        Parameters:
+        a:   4D array
+         
+        Returns:
+
+        void
+
+        """
+        self.fname=''
+        self.type='array'
+        print("pyNBED: Loading array data") 
+        self.metadata={}
+        self.data=a
+        self.dim=self.data.shape
+        print("pyNBED: array dimensions:", self.dim) 
+        self.PrepareSamplingGrid()
+        return
+    
+    def SpatialBinning(self,bin):
+        """ Spatial Binning
+
+        Binning of the first two dimensions x,y of the 4D STEM data (x,y,qx,qy)
+
+        Parameters:
+        bin:   binning factor (default: 2)
+
+        returns
+        
+        nothing (the object data will be replaced)
+       
+        """        
+        dima=self.data.shape
+        print(f"pyNBED: Original array dimensions - {dima}")
+        b=np.reshape(self.data[0:(dima[0]//bin)*bin,0:(dima[1]//bin)*bin,:,:],(int(dima[0]/bin)*bin,int(dima[1]/bin),bin,dima[2],dima[3])).sum(2)
+        d=np.reshape(b,(int(dima[0]/bin)*bin,int(dima[1]/bin),dima[2],dima[3]))
+        e=np.reshape(d,(int(dima[0]/bin),bin,int(dima[1]/bin),dima[2],dima[3])).sum(1)
+        del self.data
+        self.data=e
+        self.dim=e.shape
+        print("pyNBED: Binned array dimensions:", self.dim) 
+        self.PrepareSamplingGrid()
+        return
+
+    def FrameBinning(self,bin=2):
+        """ Frame Binning
+
+        Binning of the last two dimensions qx, qy of the 4D STEM data (x,y,qx,qy)
+
+        Parameters:
+        bin:   binning factor (default: 2)
+
+        returns
+        
+        nothing (the object data will be replaced)
+       
+        """
+        dima=self.data.shape     
+        print(f"pyNBED: Original array dimensions - {dima}")
+        b=np.reshape(self.data[:,:,0:(dima[2]//bin)*bin,0:(dima[3]//bin)*bin],(dima[0],dima[1],int(dima[2]/bin)*bin,int(dima[3]/bin),bin)).sum(4)                     
+        d=np.reshape(b,(dima[0],dima[1],int(dima[2]/bin)*bin,int(dima[3]/bin)))
+        e=np.reshape(d,(dima[0],dima[1],int(dima[2]/bin),bin,int(dima[3]/bin))).sum(3)
+        del self.data
+        self.data=e
+        self.dim=e.shape
+        print("pyNBED: Binned array dimensions - ", self.dim) 
+        self.PrepareSamplingGrid()
+        return    
 
     def ShowFrame(self, i=None,j=None, Log=None, sd=3, minmax=None):
         """ Display a diffraction frame  
@@ -313,6 +387,49 @@ class pyNBED:
         print("finished")
         self.data=self.data.reshape(self.dim[0],self.dim[1],self.dim[2],self.dim[3])
         return
+
+    def Com(self, mask=None,optimize=True):
+        """ Calculate the centre of mass in the diffraction frames 
+            Do not compensate diffraction shifts before calling this routine
+
+        Parameters:
+        mask:      optional mask to restrict q-ranges, you can use a mask returned by VirtualApertureImage()
+                   the mask is ignored for the center optimization
+                 
+        optimize:  optional regression with a polynomial of second order in order to subtract common shifts
+                   to leave only local variations for the center-of-mass analysis [default: True]
+
+        Returns:
+
+        refined_centre, com 
+
+        com: centre of mass, complex 2D array
+        refined_centre: fitted center of mass polynomial, complex 2D array 
+
+        """        
+        dim=self.data.shape
+        coords = np.indices((dim[2],dim[3]))
+        com=np.zeros((dim[0],dim[1]),dtype=np.complex64)
+        refined_centre=np.zeros((dim[0],dim[1]),dtype=np.complex64)
+        for i in range(dim[0]):
+            for k in range(dim[1]):
+                # Calculating the weighted sum of x and y coordinates
+                image=self.data[i,k,:,:].reshape(dim[2],dim[3])
+                if optimize:
+                    loc=np.unravel_index(np.argmax(image, axis=None), image.shape)
+                    refined_centre[i,k]=complex(loc[0],loc[1])
+                if mask is not None:
+                    image *= mask
+                com[i,k] = complex(np.sum(coords[0] * image),np.sum(coords[1] * image)) / np.sum(image)
+        # returning the center of mass
+        if optimize:
+            # fit a plane to 
+            dxfit=ParabolaFit2D(np.real(refined_centre))
+            dyfit=ParabolaFit2D(np.imag(refined_centre))
+            refined_centre=dxfit + dyfit * 1j
+            com = com - refined_centre
+        return refined_centre, com
+
 
     def LinearIndexArray(self, rows, cols, is_roi=True):
         """ Convert an array of columns and row vectors into a linear set of indices 
@@ -578,16 +695,19 @@ class pyNBED:
                     f=f.sort_values(by=['q'], ascending=True)
                     # add frame results to list
                     framepeaklist.append({'i': i,'j': j,'x':f['x'].values-halfframedim[0],'y':f['y'].values-halfframedim[1],'q':f['q'].values,'mass':f['mass'].values,'size':f['size'].values,'raw_mass':f['raw_mass'].values})
-                    if markers:
-                        colors = np.random.rand(len(f))
-                        scat.remove()
-                        scat=plt.scatter(f.x, f.y, s=f.mass/2, c=colors, alpha=0.5)
-                        txt.remove()
+                    colors = np.random.rand(len(f))
+                    scat.remove()
+                    txt.remove()
+                    if not(markers):
+                        scat=plt.scatter(f.x, f.y, s=f.mass/2, c=colors, alpha=0.0)
+                        txt=plt.figtext(0.55, 0.8, "i,j = "+str(i)+","+str(j),fontsize = 12,color ="black") 
+                    else:
+                        scat=plt.scatter(f.x, f.y, s=f.mass/2, c=colors, alpha=0.5)  
                         txt=plt.figtext(0.55, 0.8, "i,j;#peaks = "+str(i)+","+str(j)+";"+str(len(f)),fontsize = 12,color ="black") 
-                        #display.clear_output(wait=True)
-                        display.display(plt.gcf(),clear=True)
-                        display.clear_output(wait=True)
-                        time.sleep(0.001)
+                    #display.clear_output(wait=True)
+                    display.display(plt.gcf(),clear=True)
+                    display.clear_output(wait=True)
+                    time.sleep(0.001)
         else:
             for ind in tqdm(idxarray,desc='Processing Frames '):  
                 i=ind // self.dim[1]
@@ -782,6 +902,203 @@ class pyNBED:
 #    def filter_framepeaklist(self, framepeaklist, refine=True, qrange=None, minmass=none):
 #    
 #    return
+
+
+    def OrientationMap(self, framepeaklist,qrange=None,massthresh=None,refine=True):
+        """ OrientationMap
+            
+            Create an orientation and intensity map based on a dictionary of refined diffraction peaks
+            Searches for the matching peak distances from the centre of the diffraction frame.
+            The strongest peak is selected in case multiple hits are recorded for a single spatial location.
+
+        Parameters:
+        
+        framepeaklist: diffraction peak list, a dict returned by PeakDetection()
+        range:         2-element array of floats, inner and outer radius of the search range in pixels (default=None, no range filtering)
+        massthresh:    minimum peak (raw) signal, used to cut off noise  (default=None, no mass cut-off) 
+        refine:        refine center location of the diffraction peak list (default=True, recommended)
+           
+        Notes: 
+        
+        the mask will span the range [iradius,oradius[
+        the computational effort is proportional to the number of pixels in the mask
+        
+        Examples: 
+        
+        omap, magmap = OrientationMap(framepeaklist, qrange=[30.2,32.5],massthresh=10.3,refine=True)
+ 
+        Returns:
+
+        qmap, intmap -  qmap is a complex array with the spatial dimensions, intmap a float array of corresponding peak masses
+        """
+        res=[]
+        for f in framepeaklist:
+            if (f['x'][1:]).size:
+                x0=0
+                y0=0
+                if refine:
+                    # subtract the exact location of the central beam
+                    x0=f['x'][0]
+                    y0=f['y'][0]
+                    qarr=np.sqrt((f['x']-x0)*(f['x']-x0)+(f['y']-y0)*(f['y']-y0))
+                else:
+                    qarr=f['q']
+                # predefine filter
+                if (qrange or massthresh):
+                    filt=(f['raw_mass'][1:] >= 0) # initialize bool filter
+                    if qrange:
+                        filt=(filt & ((qarr[1:] >= qrange[0]) & (qarr[1:] < qrange[1]))) # apply range                    
+                    if massthresh:
+                        filt=(filt & ((f['raw_mass'][1:]>= massthresh))) # apply mass threshold
+                    filt=np.argwhere(filt) # get indices
+                    # return spatial locations
+                    if filt.any(): 
+                        # can still be multiple hits, we select the strongest?
+                        # remaining masses:
+                        masses=(f['raw_mass'][1:])[filt]
+                        sel=np.argmax(masses)
+                        x=((f['x'][1:])[filt]-x0)
+                        y=((f['y'][1:])[filt]-y0)
+                        res.append((f['i'],f['j'],masses[sel][0],x[sel][0],y[sel][0],np.sqrt(x[sel][0]*x[sel][0]+y[sel][0]*y[sel][0])))
+                else:
+                    masses=(f['raw_mass'][1:])[filt]
+                    sel=np.argmax(masses)
+                    x=(f['x'][1:]-x0)
+                    y=(f['y'][1:]-y0)
+                    res.append((f['i'],f['j'],masses[sel][0],x[sel][0],y[sel][0],np.sqrt(x[sel][0]*x[sel][0]+y[sel][0]*y[sel][0])))
+        qmap=np.zeros((self.dim[0],self.dim[1]),dtype=np.complex64)
+        intmap=np.zeros((self.dim[0],self.dim[1]),dtype=np.float64) 
+        for item in res:
+            qmap[item[0],item[1]]=complex(item[4],item[3])
+            intmap[item[0],item[1]]=np.abs(item[2])           
+        return qmap, intmap
+    
+
+    def Complex2HSVPlot(self, zdata, amp, clip=(None,None), larmor=90, multiplicity=1,origin='lower', saturation=0.8):
+        """ Complex2HSVPlot
+
+            Plot a complex-valued data set with hue=phase of zdata, saturation=const., value=amplitude-weighted
+        
+            Example:
+
+            Complex2HSVPlot(orientationmap, magnitudemap, 0.0*np.max(np.abs(magnitudemap)), 0.5*np.max(np.abs(magnitudemap)),multiplicity=2,saturation=1.)
+            
+        """
+        if clip[0] is None:
+            ampmin=np.min(amp)
+        else:
+            ampmin=float(clip[0])
+        if clip[1] is None:
+            ampmax=np.max(amp)
+        else:
+            ampmax=float(clip[1])
+        # get amplidude of z and limit to [ampmin, ampmax]
+        amp = np.where(amp < ampmin, ampmin, amp)
+        amp = np.where(amp > ampmax, ampmax, amp)
+        ph = np.angle(zdata, deg=1) * multiplicity + larmor
+        # HSV are values in range [0,1]
+        h = (ph % 360) / 360
+        s = saturation * np.ones_like(h)
+        v = (amp -ampmin) / (ampmax - ampmin)
+        plt.title('Phase Plot (Hue=Phase, Value=Magnitude)')
+        img=hsv_to_rgb(np.dstack((h,s,v)))
+        plt.imshow(img, origin=origin)
+        return img        
+    
+    def Complex2HSVPlotLgnd(self, zdata, w, clip=(None,None), larmor=0., multiplicity=2,origin='lower', saturation=0.8):
+        """ Complex2HSVPlotLgnd
+
+            Weighted phase plot of a complex-valued two dimansional array, with a circular color legend
+
+            zdata:  two-dimensional complex array, the phase is encoded in the hue of the HSV color mapping
+            w:      two-dimensional array, the magnitude values that appear as the chroma (value) of the HSV color mapping
+            clip:   clipping for the values of w, if not set the chroma is scaled between the minimum and maximum of w
+            larmor: Larmor offset of the color map in degrees (default=0.)
+            multiplicity: multiplicity of the colormap (default=2)
+            origin: use this flag to flip the map top/bottom
+            saturation: the saturation is set to a constant value
+            
+
+            Example:
+
+            w=np.sqrt(np.abs(amplitudes))
+            im=Complex2HSVPlotLgnd(z, w,clip=(None,0.6*np.max(w)), larmor=-90.,multiplicity=2,saturation=0.9)
+ 
+        """
+        if clip[0] is None:
+            ampmin=np.min(w)
+        else:
+            ampmin=clip[0]
+        if clip[1] is None:
+            ampmax=np.max(w)
+        else: 
+            ampmax=np.max(w)
+        # get amplidude of z and limit to [ampmin, ampmax]
+        w = np.where(w < ampmin, ampmin, w)
+        w = np.where(w > ampmax, ampmax, w)
+        ph = np.angle(zdata, deg=1)
+        ph_n = ph*multiplicity - larmor
+        # HSV are values in range [0,1]
+        #h = (ph_n % 2.*np.pi)/ 2*np.pi 
+        h = (ph_n % 360.)/ 360. 
+        s = saturation * np.ones_like(h)
+        v = (w - ampmin) / (ampmax - ampmin) 
+        #plt.title('Phase Plot (Hue=Phase, Value=Magnitude)')
+        img=hsv_to_rgb(np.dstack((h,s,v)))
+        # -------------------------------------------------
+        # Figure with two axes
+        # -------------------------------------------------
+        fig, (ax_img, ax_wheel) = plt.subplots(1, 2, figsize=(12, 6),
+            gridspec_kw={'width_ratios': [8, 1]}
+        )
+        # Main image
+        ax_img.imshow(img, origin='lower')
+        # ax_img.set_title("Complex field\nHue = phase, Value = amplitude")
+        ax_img.set_xlabel("x")
+        ax_img.set_ylabel("y")
+
+        # colorwheel
+        n = 500
+        x = np.linspace(-1, 1, n)
+        y = np.linspace(-1, 1, n)
+        X, Y = np.meshgrid(x, y)
+
+        R = np.sqrt(X**2 + Y**2)
+        Theta = np.arctan2(Y, X) - larmor*np.pi/180.
+        Theta_n = (multiplicity * Theta) % (2 * np.pi)
+
+        H = (Theta_n) / (2 * np.pi) 
+        S = saturation* np.ones_like(H) #np.clip(R, 0, 1)
+        # V = np.ones_like(S)
+        V=R #np.max(R) needs to scale between 0. and 1., just as the nmain image data
+
+
+        RGB = hsv_to_rgb(np.dstack((H, S, V)))
+        RGB[R > 1] = 1.0
+
+        ax_wheel.imshow(
+            RGB,
+            extent=[-1, 1, -1, 1],
+            origin='lower'
+        )
+        ax_wheel.set_aspect('equal')
+        ax_wheel.axis('off')
+        # Phase rays and labels
+        angles = np.linspace(0, 2*np.pi, 4, endpoint=False)
+        labels = ['0', 'π/2', 'π', '−π/2']
+
+        for a, lbl in zip(angles, labels):
+            ax_wheel.plot([0, np.cos(a)], [0, np.sin(a)],
+                color='grey', lw=0.5, alpha=0.6)
+            ax_wheel.text(1.1*np.cos(a), 1.1*np.sin(a),
+                lbl, ha='center', va='center', fontsize=10)
+        # end colorwheel
+
+        plt.tight_layout()
+        plt.show()
+        #plt.imshow(img, origin=origin)
+        return img
+    
 
     def StackExport(self, format='raw'):
         """ Export data set
