@@ -1,4 +1,3 @@
-
 import numpy as np
 import numpy.matlib
 import matplotlib.pyplot as plt
@@ -9,10 +8,29 @@ import time
 from IPython import display
 import os
 from tqdm import tqdm 
-from ..helpers import ParabolaFit2D,convolve2D,read_empad,bytscl
+from .helpers import ParabolaFit2D, bytscl
+from .nbedio import read_empad, load_dectris_dask_binned, load_dectris_em_metadata
 import itertools
 from matplotlib.colors import hsv_to_rgb
 import mrcfile
+import json
+import io
+import zipfile
+
+
+# A class for formatting ndarrays for json export
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NpEncoder, self).default(obj)
+
 
 # A processing class for 4D-STEM nanodiffraction data
 
@@ -23,7 +41,7 @@ class pyNBED:
         self.fname='' 
         self.type=''
         self.dim=[]
-        self.peakdetpar={'feat_sz':7,'feat_minmass':1,'feat_sep':6,'feat_perc':50.,'noise_sz':1,'thresh':1,'smooth_sz':None,'cmin':1.,'cmax':10,'conv_kernel':1./9*np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]),'toggleconv':True}        # keep noise_sz at 1.0, filtering means somehow that the peaks are displaced
+        self.peakdetpar={'feature_size':7,'feature_minmass':1,'feature_separation':6,'feature_percentile':50.,'noise_size':1,'feature_threshold':1,'smooth_size':None,'frame_cmin':1.,'frame_cmax':10,'conv_kernel':1./9*np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]),'toggleconv':True, 'conv2D':True,'frame_cutoff':0}        # keep noise_sz at 1.0, filtering means somehow that the peaks are displaced
         self.metadata=None
         self.qsamplinggrid=None
         self.qsamplinggrid2=None
@@ -46,25 +64,81 @@ class pyNBED:
         self.qsamplinggrid=np.sqrt(self.qsamplinggrid2)
         return
 
-    def LoadFile (self, fname, type='PantaRhei'):
+    def LoadFile (self, fname, type='PantaRhei', **kwargs):
         """ Load a 4D STEM dataset  
 
         Parameters:
-        fname:   complete filename including path and suffix
-        type:    'PantaRhei' or 'EMPAD' [default: PantaRhei]
+        fname:     complete filename including path and suffix
+        type:      'PantaRhei' or 'EMPAD' or 'DECTRIS' [default: PantaRhei]
+
+        optional keyword arguments for the data types and their defaults
+
+        'PantaRhei' - is_zipfile=False:  # uncompress datafile that has been compressed with a standard zip utility [default: False]
+        'DECTRIS'   - scan_shape=None,   # tuple, (scan_y, scan_x)
+                      bin_scan=(1, 1),   # tuple, scan frame binning 
+                      bin_det=(1, 1),    # tuple, detector frame binning
+                      chunk_frames=2048, # read buffer size
+                      reduction='sum',   # numerical operation for binning, 'sum' preserves electron counts;
+                                         # 'mean' preserves scale.
+                      max_ram_fraction=0.8, #Maximum fraction of currently AVAILABLE system memory allowed for output array
  
         Returns:
 
-        void
+        void (data and metadata is loaded to the instance of the nbed object)
+
+        Examples:
+
+        filename='my_PantaRhei_file.prz'
+        myset.LoadFile(filename)
+
+        or
+
+        filename='my_dectris_master.h5'
+        args = {'scan_shape': (1024,1024), 'bin_scan': (8,8), 'bin_det': (1,1)}
+        myset.LoadFile(filename, type='DECTRIS',**args)
 
         """
+        kwargs_defaults = {
+            'is_zipfile': False,
+            'scan_shape': None,
+            'bin_scan': (1,1),
+            'bin_det': (1,1),
+            'chunk_frames':2048,
+            'reduction':'sum',
+            'max_ram_fraction':0.8
+        }
+
+        # 2. Overwrite defaults with passed kwargs
+        act_args = {**kwargs_defaults, **kwargs}
         self.fname=fname
         self.type=type
         if self.type == 'PantaRhei':
-            self.type=type
-            print("pyNBED: Loading object descriptor: "+self.fname)
-            fh=np.load(self.fname, allow_pickle=True)
-            self.metadata=fh['meta_data']
+            self.type=type 
+            if act_args['is_zipfile']:
+                # Open the standard zip archive
+                thearch=self.fname+".zip"
+                print("pyNBED: Opening zip-archive "+thearch)
+                with zipfile.ZipFile(thearch, 'r') as zipped_file:
+                    # Open the specific .prz file inside the zip
+                    directory, filename = os.path.split(self.fname)
+                    with zipped_file.open(filename) as file_entry:
+                        # Wrap in BytesIO so numpy can read/seek through the binary stream
+                        data_bytes = io.BytesIO(file_entry.read())
+                        print("pyNBED: Loading object descriptor "+self.fname)
+                        fh = np.load(data_bytes, allow_pickle=True)
+            else:
+                print("pyNBED: Loading object descriptor "+self.fname)
+                fh=np.load(self.fname, allow_pickle=True)
+            self.metadata={}
+            if "meta_data" in fh:
+                self.metadata=fh['meta_data']
+            else:
+                if "meta_data_json" in fh:
+                    # 1. Extract the scalar string using `.item()`
+                    # 2. Parse the JSON string into a list of dictionaries
+                    data_list = json.loads(fh['meta_data_json'].item())
+                    # 3. Access the  dictionary, the JSON string is a 1-item array: [...])
+                    self.metadata = data_list[0]
             # load data array and report dimensions
             print("pyNBED: Loading data ...")
             self.data=fh['data']
@@ -80,8 +154,47 @@ class pyNBED:
             self.dim=self.data.shape
             print("pyNBED: array dimensions:", self.dim) 
             self.PrepareSamplingGrid()
-        return
+        if self.type == 'DECTRIS':
+            self.type=type
+            print("pyNBED: Loading DETRIS data from "+self.fname)
+            scan_shape=act_args['scan_shape']
+            # search for em_metadata
+            emmetadata={}
+            metadata_filepath = self.fname.replace('_master.h5', '_em_metadata.h5')
 
+            if os.path.exists(metadata_filepath):
+                print(f"pyNBED: Loading EM Metadata from - {metadata_filepath}")
+                scan_shape, mag, cl, emmetadata=load_dectris_em_metadata(metadata_filepath)
+                print(f"pyNBED: Scan shape array dimensions - {scan_shape}")
+                print(f"pyNBED: Magnification {mag}, Camera Length {cl}")
+                
+            else:
+                print(f"Metadata file missing: {metadata_filepath}")
+                
+            try:
+                self.data, self.metadata=load_dectris_dask_binned(self.fname,
+                                                              scan_shape=scan_shape, 
+                                                              bin_scan=act_args['bin_scan'], 
+                                                              bin_det=act_args['bin_det'],
+                                                              chunk_frames=act_args['chunk_frames'], 
+                                                              reduction=act_args['reduction'],
+                                                              max_ram_fraction=act_args['max_ram_fraction'])
+                self.dim=self.data.shape
+                print("pyNBED: array dimensions:", self.dim) 
+                self.PrepareSamplingGrid()
+                self.metadata |= emmetadata
+            except MemoryError as e:
+                print(f"Memory Check Failed: {e}")
+                # Handle failure: Increase binning, compute slice-by-slice, or abort
+                self.data, self.metadata = None, None
+        return
+    
+    def __UpdatePeakDetPar(self, params=None):
+        if (params != None):
+            self.peakdetpar.update(params)
+        return
+            
+    
     def FromArray(self, a):
         """ Load a 4D STEM dataset from an array  
 
@@ -533,10 +646,9 @@ class pyNBED:
         return par
       
 
-    def AnimateFrames(self, idxarray, params=None):
-        
+    def AnimateFrames_OLD(self, idxarray, origin='lower', params=None):
         if params is None:
-            params=PreparePeakDetectionPars()
+            params=self.peakdetpar
         feat_sz=params['feature_size']
         feat_minmass=params['feature_minmass']
         feat_sep=params['feature_separation']
@@ -549,6 +661,7 @@ class pyNBED:
         conv2D=params['conv2D']
         conv_kernel=1./9*np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
         # overwrite with self.peakdetpar
+        self.peakdetpar.update(params)
         # return table
         img=self.data[idxarray[0]//self.dim[0],idxarray[0] % self.dim[0],:,:]
         if params["frame_cutoff"] > 0.:
@@ -556,7 +669,7 @@ class pyNBED:
         else:
             img[(img < 0.)]=0       
         plt.figure()
-        plt.imshow(bytscl(img,vmin=cmin,vmax=cmax),origin="lower") 
+        plt.imshow(bytscl(img,vmin=cmin,vmax=cmax),origin=origin) 
         plt.show()
         txt=plt.figtext(0.55, 0.8, "i,j = ",fontsize = 12,color ="black") 
         #
@@ -578,7 +691,63 @@ class pyNBED:
             time.sleep(0.001)
         return
 
-    def PeakDetection(self, idxarray, params=None, animate=True, raw=False, markers=True):        
+
+    def AnimateFrames(self, idxarray, params=None, origin='lower'):
+        if params is None:
+            params = self.peakdetpar
+
+        conv2D = params.get('conv2D', False)
+        conv_kernel = 1. / 9 * np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
+        self.peakdetpar.update(params)
+
+        # 1. Initialize Figure and Axes ONCE
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+        # Fetch initial frame
+        first_idx = idxarray[0]
+        i0, j0 = first_idx // self.dim[0], first_idx % self.dim[0]
+
+        if conv2D:
+            filtim0 = convolve2D(self.data[i0, j0, :, :], conv_kernel, padding=2)
+        else:
+            filtim0 = self.data[i0, j0, :, :]
+
+        dispim0 = bytscl(np.log(filtim0 + 1.), vmin=params["frame_cmin"], vmax=params["frame_cmax"])
+
+        # 2. Store image artist reference
+        im = ax.imshow(dispim0, origin=origin)
+
+        # 3. Create SINGLE text artist reference
+        txt = fig.text(0.55, 0.8, f"i,j = {i0},{j0}", fontsize=12, color="black")
+
+        plt.ion()  # Turn on interactive mode
+        display.display(fig)
+
+        # 4. Loop: Update existing artists instead of making new ones
+        for ind in idxarray:
+            i = ind // self.dim[0]
+            j = ind % self.dim[0]
+
+            if conv2D:
+                filtim = convolve2D(self.data[i, j, :, :], conv_kernel, padding=2)
+            else:
+                filtim = self.data[i, j, :, :]
+
+            dispim = bytscl(np.log(filtim + 1.), vmin=params["frame_cmin"], vmax=params["frame_cmax"])
+
+            # UPDATE existing artists directly in RAM (Zero Allocation Overhead)
+            im.set_data(dispim)
+            txt.set_text(f"i,j = {i},{j}")
+
+            # Refresh canvas output without rebuilding figure tree
+            display.clear_output(wait=True)
+            display.display(fig)
+            time.sleep(0.001)
+
+        plt.close(fig)  # Clean up figure from memory when done
+        return
+    
+    def PeakDetection(self, idxarray, params=None, animate=True, raw=False, markers=True, origin='lower'):        
  
         """ Auto-detect diffraction peaks in a set of frames      
         
@@ -636,7 +805,7 @@ class pyNBED:
 
         """
         if params is None:
-            params=PreparePeakDetectionPars()
+            params=self.peakdetpar
         feat_sz=params['feature_size']
         feat_minmass=params['feature_minmass']
         feat_sep=params['feature_separation']
@@ -649,6 +818,7 @@ class pyNBED:
         conv2D=params['conv2D']
         conv_kernel=1./9*np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
         # overwrite with self.peakdetpar
+        self.peakdetpar.update(params)
         # return table
         img=self.data[idxarray[0]//self.dim[1],idxarray[0] % self.dim[1],:,:]
         if params["frame_cutoff"] > 0.:
@@ -657,7 +827,9 @@ class pyNBED:
             img[(img < 0.)]=0
         if animate:
             plt.figure()
-            plt.imshow(bytscl(img,vmin=cmin,vmax=cmax),origin="lower") 
+            plt.imshow(bytscl(img,vmin=cmin,vmax=cmax),origin=origin)
+            if origin == 'lower':
+                plt.gca().invert_yaxis()
             plt.show()
             scat=plt.scatter([], [])
             txt=plt.figtext(0.55, 0.8, "i,j;#peaks = ",fontsize = 12,color ="black") 
@@ -677,7 +849,9 @@ class pyNBED:
                 scale=cmax/np.max(img)
                 filtim[filtim < 0]=0.
                 dispim=bytscl(np.log(filtim+1.),vmin=params["frame_cmin"], vmax=params["frame_cmax"])
-                plt.imshow(dispim,cmap='gray_r',origin="lower")
+                plt.imshow(dispim,cmap='gray_r',origin=origin)
+                #if origin == 'lower':
+                    #plt.gca().invert_yaxis()
                 # detect on linear scale
                 #f=detect_peaks(bytscl(filtim,vmin=cmin,vmax=cmax),feat_sz,noise_sz=noise_sz,thresh=thresh,feat_minmass=feat_minmass,feat_sep=feat_sep,feat_perctile=feat_perc,inv=False,smoothing_size=smooth_sz)
                 # detect on log scale
@@ -754,92 +928,147 @@ class pyNBED:
         (x,y)  two np.arrays with x and y coordinate  
 
         """
+        # make a safe copy of the framepeaklist
+        fplist=framepeaklist.copy()
         x=[]
         y=[]
-        for f in framepeaklist:
-            if (f['x'][1:]).size:
-                x0=0
-                y0=0
-                if refine:
-                    # subtract the exact location of the central beam
-                    x0=f['x'][0]
-                    y0=f['y'][0]
-                # prediefine filter
+        if refine:
+            for f in fplist:
+                # subtract the exact location of the central beam
+                f['x'] -= f['x'][0]
+                f['y'] -= f['y'][0]
+                f['q']=(np.sqrt(np.array(f['x'])**2+np.array(f['y'])**2).tolist())
+        for f in fplist:
+            if len((f['x'][1:]) > 1):               
+                # predefine filter
                 if (qrange or massthresh):
-                    filt=(f['raw_mass'][1:] >= 0) # initialize bool filter
+                    filt=(f['raw_mass'] >= 0) # initialize bool filter
                     if qrange:
-                        filt=(filt & ((f['q'][1:] >= qrange[0]) & (f['q'][1:] < qrange[1]))) # apply range
+                        filt=(filt & ((np.array(f['q']) >= qrange[0]) & (np.array(f['q']) < qrange[1]))) # apply range
                     if massthresh:
-                        filt=(filt & ((f['raw_mass'][1:]>= massthresh))) # apply mass threshold
+                        filt=(filt & ((np.array(f['raw_mass']) >= massthresh))) # apply mass threshold
                     filt=np.argwhere(filt) # get indices
-                    if filt.any(): 
-                        x.append(((f['x'][1:])[filt]-x0).tolist())
-                        y.append(((f['y'][1:])[filt]-y0).tolist())
+                    if filt.any():
+                        
+                        x.append(f['x'][filt])
+                        y.append(f['y'][filt])
                 else:
-                    x.append((f['x'][1:]-x0).tolist())
-                    y.append((f['y'][1:]-y0).tolist())
+                    x.append(f['x'])
+                    y.append(f['y'])
         x=list(itertools.chain(*x))
         y=list(itertools.chain(*y))
         return (np.array(x),np.array(y))
 
-    def DebyeScherrerPlot(self, framepeaklist,refine=False, massthresh=None, qrange=None, markersize=2, colors=None):
+
+    def DebyeScherrerPlot(self, framepeaklist, refine=False, massthresh=None, qrange=None, markersize=1.5, color='black', scale=1., unit="pix"):
         """ Create a scatter plot of peak locations from a framepeaklist 
-            generated by PeakDetection
+            generated by PeakDetection with dual axes (physical units on bottom/left, pixels on top/right).
 
         Parameters:
         framepeaklist:    list of frame peak data, output of PeakDetection()
-        refine:           subtract the exact locaton of the central beam [default: False]
-        massthresh:       filter for peaks with a rwa_mass threshold > massthresh
-        qrange:           2-element array [q0,q1[, only peaks in this range are returned
-        markersize:       marker size in pix
-        colors:           color index
+        refine:           subtract the exact location of the central beam [default: False]
+        massthresh:       filter for peaks with a raw_mass threshold > massthresh
+        qrange:           2-element array [q0, q1], only peaks in this pixel range are returned
+        markersize:       marker size in points^2
+        color:            color name or array
+        scale:            scaling factor, axis calibration (default=1.)
+        unit:             axes unit for physical scale (e.g., "A^-1", "nm^-1", "mm")
 
         Returns:
-
-        (x,y)  np.arrays with the refined and filtered x and y coordinate
-
-        Example: 
-
-        (x,y)=DebyeScherrerPlot(framepeaklist, refine=True, massthresh=300)
-        
+        (x, y) np.arrays with the refined and filtered x and y coordinates (in pixels)
         """
-        (x,y)=self.__filterpeaklist(framepeaklist, refine=refine,massthresh=massthresh,qrange=qrange)
-        N=x.size
-        if colors:
-            col=colors
+        (x, y) = self.__filterpeaklist(framepeaklist, refine=refine, massthresh=massthresh, qrange=qrange)
+        N = x.size
+        if color:
+            col = color
         else:
             col = np.random.rand(N)
-        plt.figure()
-        plt.gca().set_aspect('equal')
-        scat=plt.scatter(x, y, s=markersize,c=col)
-        plt.show
-        return (x,y)
 
-    def PeakDistanceHistogram(self, framepeaklist, refine=True, massthresh=None, qrange=None, refscale=3):
-        """ Create a histogram plot of peak distances from a framepeaklist 
-            generated by PeakDetection
+        fig, ax = plt.subplots(figsize=(6, 6))  # square figure helps aspect ratio
 
-        Parameters:
-        framepeaklist:    list of frame peak data, output of PeakDetection()
-        refine:           subtract the exact locaton of the central beam [default: False]
-        massthresh:       filter for peaks with a rwa_mass threshold > massthresh
-        qrange:           2-element array [q0,q1[, only peaks in this range are returned
-        refscale:         scaling factor for number of bins (default: 3, means target is 1/3 pixel precision) 
+        # Primary plot: Plotted in Physical Units (bottom and left)
+        x_phys = x * scale
+        y_phys = y * scale
 
-        Returns:
+        ax.scatter(
+            x_phys, y_phys,
+            s=markersize,
+            marker='o',
+            color=col,
+            linewidths=0
+        )
 
-        (counts, bins)
+        # Equal aspect ratio
+        ax.set_aspect('equal', adjustable='box')
 
-        Example:
+        # Primary Labels (Bottom & Left)
+        ax.set_xlabel(f'q_x [{unit}]')
+        ax.set_ylabel(f'q_y [{unit}]')
 
-        (counts,bins)=PeakDistanceHistogram(framepeaklist, refine=True, massthresh=200)
+        # Conversion functions between physical units and pixels
+        # forward:  pixel -> physical
+        # inverse:  physical -> pixel
+        forward = lambda px: px * scale
+        inverse = lambda phys: phys / scale if scale != 0 else phys
 
+        # Secondary Axes: Top (X in pixels) and Right (Y in pixels)
+        sec_ax_x = ax.secondary_xaxis('top', functions=(inverse, forward))
+        sec_ax_x.set_xlabel('q_x [pix]')
+
+        sec_ax_y = ax.secondary_yaxis('right', functions=(inverse, forward))
+        sec_ax_y.set_ylabel('q_y [pix]')
+
+        # Optional: tight layout for publications
+        fig.tight_layout()
+        plt.show()
+
+        return (x, y)
+
+    def PeakDistanceHistogram(self, framepeaklist, refine=True, massthresh=None, qrange=None, refscale=3, pixel_scale=1.0, unit_label="unit"):
+        """ Create a histogram plot of peak distances with the scaled physical axis on the bottom 
+            and the pixel bin axis on top.
+
+            Parameters:
+            framepeaklist:    list of frame peak data, output of PeakDetection()
+            refine:           subtract the exact location of the central beam [default: False]
+            massthresh:       filter for peaks with a raw_mass threshold > massthresh
+            qrange:           2-element array [q0, q1], only peaks in this range are returned
+            refscale:         scaling factor for number of bins (default: 3) 
+            pixel_scale:      scaling factor to convert pixel distance to physical units (e.g. q-vector, nm^-1, or mm)
+            unit_label:       label string for the secondary physical axis
+
+            Returns:
+            (counts, bins)
         """
-        # assume 1/3 pixel size precision  
-        (x,y)=self.__filterpeaklist(framepeaklist, refine=refine,massthresh=massthresh, qrange=qrange)
-        qarr=np.sqrt(x*x+y*y)
+        (x, y) = self.__filterpeaklist(framepeaklist, refine=refine, massthresh=massthresh, qrange=qrange)
+        qarr = np.sqrt(x*x + y*y)
         counts, bins = np.histogram(qarr, bins=self.dim[2]*refscale)
-        plt.stairs(counts, bins)
+        
+        # Create figure and primary axis
+        fig, ax1 = plt.subplots()
+        ax1.stairs(counts, bins)
+        ax1.set_ylabel("Counts")
+
+        # Define conversion functions
+        forward = lambda px: px * pixel_scale
+        inverse = lambda phys: phys / pixel_scale
+
+        # Option A: Primary (bottom) axis displays Physical Units, Secondary (top) displays Pixels
+        # Set primary x-limits using physical units converted from pixel bin range
+        ax1.set_xlim(bins[0] * pixel_scale, bins[-1] * pixel_scale)
+        ax1.set_xlabel(unit_label)
+
+        # Plot the histogram data in physical units directly
+        ax1.clear()
+        ax1.stairs(counts, bins * pixel_scale)
+        ax1.set_xlabel(unit_label)
+        ax1.set_ylabel("Counts")
+
+        # Add top secondary axis for Pixel Bins
+        ax_top = ax1.secondary_xaxis('top', functions=(inverse, forward))
+        ax_top.set_xlabel("Distance (pixels)")
+
+        plt.show()
         return (counts, bins)
 
     
@@ -872,36 +1101,46 @@ class pyNBED:
 
         """
         # create a virtual image
-        img=np.zeros((self.dim[0],self.dim[1]),dtype=np.float64) # a dummy diffraction frame
-        mask=((self.qsamplinggrid2 >= radius[0]*radius[0]) & (self.qsamplinggrid2 < radius[1]*radius[1]))
-        if not(offset) is None:
-            mask=np.roll(np.roll(mask,offset[0],axis=1),offset[1],axis=0)
-            # shift center            
-        if invert:
-            mask = (mask == False)
-        #for i in np.arange(self.dim[0]):
-        #    for j in np.arange(self.dim[1]):
-        #        img[i,j]=np.sum(self.data[i,j,mask])
-        mask2=mask.reshape(mask.shape[0]*mask.shape[1])
-        coord=np.argwhere(mask2>0)
-        if mode:
-            if (mode == 'fluct'):
-                img=np.var((self.data[:,:,coord//self.dim[3],coord % self.dim[3]]).reshape(self.dim[0],self.dim[1],coord.shape[0]),axis=2)
-            if (mode == 'fluct_norm'):
-                dat=(self.data[:,:,coord//self.dim[3],coord % self.dim[3]]).reshape(self.dim[0],self.dim[1],coord.shape[0])
-                mean=np.mean(dat,axis=2)
-                img=np.var(dat,axis=2)/mean
-            else:
-                img=np.sum(np.sum(self.data[:,:,coord//self.dim[3],coord % self.dim[3]],axis=2),axis=2)
+        # 1. Direct mask generation with offset shift (avoids np.roll and wraps)
+        if offset is not None:
+            # Generate meshgrid coordinates centered around offset
+            y_indices = np.arange(self.dim[2]) - offset[1]-self.dim[2]//2
+            x_indices = np.arange(self.dim[3]) - offset[0]-self.dim[3]//2
+            # Re-evaluate squared radius on shifted grid
+            q2 = y_indices[:, None]**2 + x_indices[None, :]**2
         else:
-        # default is sum
-            img=np.sum(np.sum(self.data[:,:,coord//self.dim[3],coord % self.dim[3]],axis=2),axis=2)
-        return (mask, img)
+            q2 = self.qsamplinggrid2
+
+        r_min2, r_max2 = radius[0]**2, radius[1]**2
+        mask = (q2 >= r_min2) & (q2 < r_max2)
+
+        if invert:
+            mask = ~mask
+
+        # 2. Optimized Reduction Modes
+        if mode in (None, 'sum'):
+            # Direct reduction along detector axes (axes 2 and 3)
+            # NumPy optimizes axis tuple sum using fast C loops without memory copies
+            img = np.sum(self.data, axis=(2, 3), where=mask[None, None, :, :], dtype=np.float64)
+
+        elif mode == 'fluct':
+            # Flatten detector axes using mask to only pull active pixels into RAM
+            active_pixels = self.data[:, :, mask]  # shape: (scan_y, scan_x, n_mask_pixels)
+            img = np.var(active_pixels, axis=2, dtype=np.float64)
+
+        elif mode == 'fluct_norm':
+            active_pixels = self.data[:, :, mask]  # shape: (scan_y, scan_x, n_mask_pixels)
+            mean = np.mean(active_pixels, axis=2, dtype=np.float64)
+            var = np.var(active_pixels, axis=2, dtype=np.float64)
+            # Avoid division by zero
+            img = np.divide(var, mean, out=np.zeros_like(var), where=mean != 0)
+
+        else:
+            raise ValueError(f"Unknown mode '{mode}'. Choose from 'sum', 'fluct', 'fluct_norm'.")
+
+        return mask, img
     
 
-#    def filter_framepeaklist(self, framepeaklist, refine=True, qrange=None, minmass=none):
-#    
-#    return
 
 
     def OrientationMap(self, framepeaklist,qrange=None,massthresh=None,refine=True):
@@ -1052,7 +1291,7 @@ class pyNBED:
             gridspec_kw={'width_ratios': [8, 1]}
         )
         # Main image
-        ax_img.imshow(img, origin='lower')
+        ax_img.imshow(img, origin=origin)
         # ax_img.set_title("Complex field\nHue = phase, Value = amplitude")
         ax_img.set_xlabel("x")
         ax_img.set_ylabel("y")
@@ -1079,7 +1318,7 @@ class pyNBED:
         ax_wheel.imshow(
             RGB,
             extent=[-1, 1, -1, 1],
-            origin='lower'
+            origin=origin
         )
         ax_wheel.set_aspect('equal')
         ax_wheel.axis('off')
@@ -1098,6 +1337,43 @@ class pyNBED:
         plt.show()
         #plt.imshow(img, origin=origin)
         return img
+
+    def SaveColVectorsToFile(self,cols, fnappendix, outpath=None, labels=None, format="txt"):
+        """ SaveColVectorsToFile
+
+        Save a set cols=[[col_1],[col_2] ... [col_n]] of 1D numpy arrays col_1 ... col_n to a file
+
+        cols: array of column vectors
+        fnappendix: appendix to the base filename of the loaded data
+        outpath: output path, the same as the data loading path if not specified
+        labels: a single line comment to preced the data in text output
+        format: txt for ascii data, npy for a numpy file
+
+        returns
+
+        void
+        
+        """
+        if not (outpath is None):
+            dirname=outpath
+        else: 
+            dirname = os.path.dirname(self.fname)
+            basename_without_ext = os.path.splitext(os.path.basename(self.fname))[0]
+            basename=dirname+os.sep+basename_without_ext
+            fnout=basename+fnappendix
+        if format == "txt": 
+            rows = zip(*cols)
+            fnout=fnout+".txt"
+            with open(fnout, "w") as f:
+                if not (labels is None):
+                    f.write(labels+"\n")
+                for row in rows:
+                    f.write(" ".join(map(str, row)) + "\n")
+            print("pyNBED: Wrote "+fnout)
+        if format == "npy":
+            fnout=fnout+".npy"
+            np.save(fnout, cols)
+            print("pyNBED: Wrote "+fnout)
     
 
     def StackExport(self, format='raw'):
@@ -1113,11 +1389,76 @@ class pyNBED:
         dirname = os.path.dirname(self.fname)
         basename_without_ext = os.path.splitext(os.path.basename(self.fname))[0]
         basename=dirname+os.sep+basename_without_ext
-        if (export == "raw"):
+        fnout=basename+'-'+str(self.dim[1])+'x'+str(self.dim[0])+'_'+str(self.dim[2])+'x'+str(self.dim[3])+'_'+str(self.dim[1]*self.dim[0])+'frames'
+        if (format == "raw"):
             # save as 3D binary data
             # split self.fname into path and suffix            
-            fnout=basename+'-'+str(self.dim[1])+'x'+str(self.dim[0])+'_'+str(self.dim[2])+'x'+str(self.dim[3])+'_'+str(self.dim[1]*self.dim[0])+'frames'+'_uint32.raw'
+            fnout=fnout+"_uint32.raw"
             print("saving raw binary data to ",fnout)
             (self.data.reshape(self.dim[0]*self.dim[1],self.dim[2],self.dim[3])).astype('uint32').tofile(fnout)
-            print("finished")
-    
+            print("pyNBED: Wrote ",fnout)
+        if (format == "mrc"):
+            fnout=fnout+"_float32.mrc"
+            with mrcfile.new(fnout, overwrite=True) as mrc:
+                mrc.set_data((self.data.reshape(self.dim[0]*self.dim[1],self.dim[2],self.dim[3])).astype("float32"))
+                # header data: starts with 10 int32 values: nx, ny,nz; dtype; location of first uc x,y,z; Number of samples along the uc x,y,z; 
+                #              continues with the cell size in A as float32;
+                (mrc.header)["cella"]=(self.dim[1]*10,self.dim[2]*10,self.dim[0]*10)
+                #print("MRC header ",mrc.header)
+                mrc.set_image_stack()
+                mrc.close()
+                print("pyNBED: Wrote ",fnout)
+
+
+
+    def ExportFramePeakList(self, framepeaklist, refine=True,  path=None, filename=None):
+        """ Export a framepeaklist to a file 
+            The output can be used for various tasks such as automated indexing
+
+        Parameters:
+        
+        framepeaklist:    list of frame peak data, output of PeakDetection()
+        refine:           subtract the exact locaton of the central beam [default: True]
+        path:             Output path, if None then the default of the data input path applies
+        filename:         Output filename, if None then the default is 'peakdata_nbed.json'
+
+        Returns:
+
+        void
+
+        Example:
+
+        ExportFramePeakList(framepeaklist, refine=True)
+
+        """
+        
+        descr={}
+        descr["filename"]=self.fname
+        descr["dimensions"]=self.dim
+        descr["metadata"]=self.metadata
+        descr["peakdetpar"]=self.peakdetpar
+        if refine:
+            for f in framepeaklist:
+                if (f['x'][1:]).size:
+                    # subtract the exact location of the central beam
+                    x0=f['x'][0]
+                    y0=f['y'][0]
+                    f['x'][1:] -= x0
+                    f['y'][1:] -= y0
+        descr["framepeaklist"]=framepeaklist
+        if path:
+            outpath=os.path.dirname(path)
+        else:
+            outpath=os.path.dirname(self.fname)
+        if filename is None:    
+            fn=os.path.join(outpath,"nbed_peaklist.json")
+        else:
+            fn=os.path.join(outpath,"nbed_peaklist.json")
+        with open(fn, "w") as file:
+            json.dump(descr, file,cls=NpEncoder)
+            print(f"Wrote data to {fn}.")
+        return
+        
+
+
+        

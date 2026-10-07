@@ -1,6 +1,6 @@
 # nbed - A Python class for processing 4D-STEM nanodiffraction data
 
-nbed is a processing class for data reduction of nanodiffraction data. nbed helps in 
+nbed is a processing class for exploration and data reduction of nanodiffraction data. nbed helps in 
 
 
 - aligning diffraction frames
@@ -9,8 +9,11 @@ nbed is a processing class for data reduction of nanodiffraction data. nbed help
 - creating virtual images, pseudo Debye-Scherrer and powder patterns
 - creating centre of mass maps and orientation maps
 
+Interactive routines have been added for exploration of virtual images and diffraction.
+Calibration data base management was added in the last version. 
 
-Currently, nbed supports direct import of PantaRhei .prz files (serialized python object format) and EMPAD .raw files. 
+Currently, nbed supports direct import of PantaRhei .prz files (serialized python object format), EMPAD .raw files
+and DECTRIS compressed hdf5 data.   
 
 <bf>
 <bf>
@@ -33,7 +36,7 @@ You can use pip to install nbed into your preferred environment.
 
 type “python” at the command prompt in your chosen terminal to start a Python session in your active Python environment.
 
-You can now import nbed, create an instance of the nbed class and dosplay the docstring for the LoadFile method:
+You can now import nbed, create an instance of the nbed class and display the docstring for the LoadFile method:
 
 
     ➜ python

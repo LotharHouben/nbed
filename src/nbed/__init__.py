@@ -1,28 +1,33 @@
-# classes
 
-# header hooks
+# Package Metadata
+__version__ = "1.2.0"
+__author__ = "Lothar Houben"
 
-_PROGRAM_NAME = 'nbed'
-_USER_NAME = ''
-def set_author(author):
-    """ Accepts a string, which will be written to the "authoring_user" field in any EMD file headers
-        written during this Python session
-    """
-    global _USER_NAME
-    _USER_NAME = author
+
 
 from .helpers import (
     ParabolaFit2D,   
     convolve2D,
-    read_empad,
     bytscl
+)
+
+from .nbedio import (
+    read_empad,
+    load_dectris_em_metadata,
+    load_dectris_dask_binned
 )
 
 # classes                                                                                             
 
-from nbed.classes import (
-    pyNBED
+from .calmgr import MicroscopeCalibrationManager
+
+from .pyNBED import pyNBED
+
+from .nbedinteractive import (
+    select_frame
 )
 
 
-# header hooks                                                                                        
+__all__ = ["ParabolaFit2D","bytscl","read_empad","load_dectris_dask_binned","load_dectris_em_metadata","select_frame"]
+
+                                                                                        
