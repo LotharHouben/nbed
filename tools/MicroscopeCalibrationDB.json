@@ -1,0 +1,203 @@
+{
+  "version": 2.0,
+"instrumenttables":
+{ "Titan Cubed 3589":
+  {"EMPAD":
+    [ {
+      "mode": "STEM",
+      "submode": "Nanoprobe",
+      "voltage":
+      {"300000":{
+       "Cameralength": {
+	 "interpolation": "x: 19175.7/x - 0.12",
+          "unit": "1/nm",
+          "values": {
+            "1146.3": 16.53,
+            "2280.5": 8.2048
+          }
+		      },
+       "Magnification": {
+            "interpolation": "x: 184700928./x + 102.",
+            "unit": "nm",
+            "values": {
+            "80000": 2410.8
+          }
+        }
+       },
+       "200000": {
+	 "Cameralength": {
+            "interpolation": "x: 15320/x + 0.0033",
+            "unit": "1/nm",
+            "values": {
+            "286.3": 49.68,
+            "722.5": 14.98
+          }
+	 },
+       "Magnification": {
+            "interpolation": "x: 8.262E7/x+0.93",
+            "unit": "1/nm",
+            "values": {
+            "640000": 126.536,
+            "2550000": 31.615
+          }	
+	 
+      } 
+      }
+      }
+}
+    ],
+   "ELA":
+    [{
+      "mode": "STEM",
+      "submode": "Nanoprobe",
+      "subsetting": "ESI-11x7",
+      "voltage": {
+	"300000": {
+	  "Cameralength": {
+            "interpolation": "x: 1./x + 0.",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 184700928./x + 102.",
+            "unit": "nm",
+            "values": {
+            "80000": 2410.8
+            }
+          }		    
+	},
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 953.25/x + 1.88",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 9.989E7/x+0.6715",
+            "unit": "1/nm",
+            "values": {
+            "640000": 126.536,
+            "2550000": 31.615
+            }	
+	  }
+	}
+      }
+      },
+     {
+      "mode": "STEM",
+      "submode": "Microprobe",
+      "subsetting": "ESI-11x7",
+      "voltage": {
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 953.25/x + 1.88",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 8.234E7/x-54.599",
+            "unit": "1/nm",
+            "values": {
+            "24900": 3255.00,
+            "99500": 789.40
+            }	
+	  }
+	}
+      }
+     },
+     {
+      "mode": "STEM",
+      "submode": "Microprobe",
+      "subsetting": "ESI-11x9",
+      "voltage": {
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 1279./x + 1.062",
+            "unit": "1/nm",
+            "values": {
+            "37": 35.52204800,
+            "115": 12.05913600
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 8.234E7/x-54.599",
+            "unit": "1/nm",
+            "values": {
+            "24900": 3255.00,
+            "99500": 789.40
+            }	
+	  }
+	}
+      }
+      }
+    ]  
+},
+   "FEI Tecnai F20":
+  {"Dectris ARINA Si":
+   [ {
+      "mode": "STEM",
+      "submode": "Microprobe",
+      "voltage":{
+       "200000": {
+	 "Cameralength": {
+            "interpolation": "x: 4137.5/x + 0.3165",
+            "unit": "1/nm",
+            "values": {
+            "285":  15.036,
+            "520.": 8.246
+          }
+	 },
+       "Magnification": {
+            "interpolation": "x: 8.532E7/x+21.207",
+            "unit": "1/nm",
+            "values": {
+            "10000": 8533.197,
+            "28500": 2976.743
+          }	
+	 
+      } 
+      }
+      }
+       } ]
+  },
+      "KriosG3":
+  {"Dectris ARINA Si":
+   [ {
+      "mode": "STEM",
+      "submode": "Microprobe",
+      "voltage":{
+       "300000": {
+	 "Cameralength": {
+            "interpolation": "x: 5024.8/x + 0.5914",
+            "unit": "1/nm",
+            "values": {
+            "220":  23.65,
+            "430.": 12.30
+          }
+	 },
+       "Magnification": {
+            "interpolation": "x: 7.056E7/x+0.0686",
+            "unit": "1/nm",
+            "values": {
+            "20500": 5960.00,
+            "58000": 2180.00,
+	    "165000": 774
+          }	
+	 
+      } 
+      }
+      }
+       } ]
+  }
+    }
+  }
+

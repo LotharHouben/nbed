@@ -14,6 +14,7 @@ keywords = []
 authors = [
   { name = "Lothar Houben", email = "lothar.houben@gmail.com" },
 ]
+
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python",
@@ -32,15 +33,18 @@ dependencies = [
     "numpy>=1.20.0",
     "scipy>=1.7.0",
     "matplotlib>=3.4.0",
+    "scipy>=1.1.0",
     "h5py>=3.0.0",
     "hdf5plugin",
     "dask[array]>=2022.0.0",
     "psutil",
     "pims",
     "trackpy",
-    "mrcfile",
+    "mrcfile>=1.5.0",
     "tqdm",
     "ipython",
+    "ipywidgets",
+    "pims>=0.7",
 ]
 
 
