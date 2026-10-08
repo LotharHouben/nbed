@@ -707,7 +707,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
 
                 # Retrieve samplings while passing active binning parameters
                 if os.path.exists(config["cal_db_path"]):
-                    cal_mgr = MicroscopeCalibrationManager(config["cal_db_path"])
+                    cal_mgr = nbed.MicroscopeCalibrationManager(config["cal_db_path"])
                     samp, qsamp = cal_mgr.get_calibration_from_metadata(
                         new_set.metadata, 
                         type='DECTRIS',
@@ -926,21 +926,29 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
         state['filebasename'] = basename
         state['filesuffix'] = suffix
 
+        initial_bin_scan = (config["bin_scan_y"], config["bin_scan_x"])
+        initial_bin_det = (config["bin_det_y"], config["bin_det_x"])
+
         myset_obj = nbed.pyNBED()
         args = {
             'scan_shape': (256, 256),
-            'bin_scan': (config["bin_scan_y"], config["bin_scan_x"]),
-            'bin_det': (config["bin_det_y"], config["bin_det_x"])
+            'bin_scan': initial_bin_scan,
+            'bin_det': initial_bin_det
         }
         myset_obj.LoadFile(initial_filepath, type='DECTRIS', **args)
         state['myset'] = myset_obj
 
         if os.path.exists(config["cal_db_path"]):
             cal_mgr = nbed.MicroscopeCalibrationManager(config["cal_db_path"])
-            samp, qsamp = cal_mgr.get_calibration_from_metadata(myset_obj.metadata, type='DECTRIS')
-            state['re_samp'] = samp if samp else 1.0
-            state['rec_samp'] = qsamp if qsamp else 1.0
-            
+            samp, qsamp = cal_mgr.get_calibration_from_metadata(
+                myset_obj.metadata, 
+                type='DECTRIS',
+                bin_scan=initial_bin_scan,
+                bin_det=initial_bin_det
+            )
+            state['re_samp'] = samp if samp else 1.0 * initial_bin_scan[1]
+            state['rec_samp'] = qsamp if qsamp else 1.0 * initial_bin_det[1]
+
         rebuild_plot()
         lbl_status.config(text=f"Loaded: {basename}{suffix}")
 
