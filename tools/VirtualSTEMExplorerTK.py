@@ -705,11 +705,17 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
                 new_set.LoadFile(res['full_path'], type='DECTRIS', **args)
                 state['myset'] = new_set
 
+                # Retrieve samplings while passing active binning parameters
                 if os.path.exists(config["cal_db_path"]):
-                    cal_mgr = nbed.MicroscopeCalibrationManager(config["cal_db_path"])
-                    samp, qsamp = cal_mgr.get_calibration_from_metadata(new_set.metadata, type='DECTRIS')
-                    state['re_samp'] = samp if samp else 1.0
-                    state['rec_samp'] = qsamp if qsamp else 1.0
+                    cal_mgr = MicroscopeCalibrationManager(config["cal_db_path"])
+                    samp, qsamp = cal_mgr.get_calibration_from_metadata(
+                        new_set.metadata, 
+                        type='DECTRIS',
+                        bin_scan=res['bin_scan'],
+                        bin_det=res['bin_det']
+                    )
+                    state['re_samp'] = samp if samp else 1.0 * res['bin_scan'][1]
+                    state['rec_samp'] = qsamp if qsamp else 1.0 * res['bin_det'][1]
 
                 rebuild_plot()
                 lbl_status.config(text=f"Loaded: {res['filebasename']}{res['filesuffix']}")
@@ -934,7 +940,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             samp, qsamp = cal_mgr.get_calibration_from_metadata(myset_obj.metadata, type='DECTRIS')
             state['re_samp'] = samp if samp else 1.0
             state['rec_samp'] = qsamp if qsamp else 1.0
-
+            
         rebuild_plot()
         lbl_status.config(text=f"Loaded: {basename}{suffix}")
 
