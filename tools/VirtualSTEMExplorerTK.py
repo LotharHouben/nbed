@@ -298,6 +298,16 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     else:
         plt.style.use('default')
 
+        # Add an About handler:
+    def show_about_dialog():
+        messagebox.showinfo(
+            "About VirtualSTEMExplorerTK",
+            "VirtualSTEMExplorerTK v1.0\n"
+            "Interactive 4D-STEM Analysis Suite\n\n"
+            "Copyright © 2026 L. Houben - Weizmann Institute of Science.\n"
+            ""
+        )
+        
     state = {
         'myset': myset,
         'path': "",
@@ -712,6 +722,8 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     file_menu.add_command(label="Open DECTRIS Master File...", command=open_file_dialog_action)
     file_menu.add_separator()
     file_menu.add_command(label="Settings...", command=open_config_dialog_action)
+    # Add to menu bar:
+    file_menu.add_command(label="About VirtualSTEMExplorerTK", command=show_about_dialog)
     file_menu.add_separator()
     file_menu.add_command(label="Exit", command=root.quit)
     menu_bar.add_cascade(label="File", menu=file_menu)
@@ -846,8 +858,8 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     f_actions = ttk.LabelFrame(ctrl_frame, text="Tools & Export", padding="5")
     f_actions.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=2)
 
-    btn_r1 = ttk.Button(f_actions, text="Ruler Real")
-    btn_r2 = ttk.Button(f_actions, text="Ruler Recip")
+    btn_r1 = ttk.Button(f_actions, text="Ruler Real-Space")
+    btn_r2 = ttk.Button(f_actions, text="Ruler Diffraction")
 
     def toggle_ruler1():
         if state['myset'] is None: return
@@ -859,7 +871,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             artists['ruler1_text'].set_visible(True)
             artists['ruler1_text'].set_text("Click Point A on Virtual Image...")
         else:
-            btn_r1.config(text="Ruler Real")
+            btn_r1.config(text="Ruler Real-Space")
             artists['ruler1_line'].set_data([], [])
             artists['ruler1_text'].set_visible(False)
         canvas.draw_idle()
@@ -875,7 +887,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             artists['ruler2_text'].set_visible(True)
             artists['ruler2_text'].set_text("Click Point A on Diffraction Pattern...")
         else:
-            btn_r2.config(text="Ruler Recip")
+            btn_r2.config(text="Ruler Diffraction")
             artists['ruler2_line'].set_data([], [])
             artists['ruler2_text'].set_visible(False)
         canvas.draw_idle()
@@ -893,12 +905,12 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
         try:
             fig.savefig(filename, bbox_inches='tight', pad_inches=0.05)
             next_idx_new, _ = get_next_filename()
-            btn_save.config(text=f"Save #{next_idx_new:03d}")
+            btn_save.config(text=f"Export Figure #{next_idx_new:03d}")
             messagebox.showinfo("Export Success", f"Successfully exported:\n{filename}")
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export figure:\n{e}")
 
-    btn_save = ttk.Button(f_actions, text="Save #001", command=save_figure_callback)
+    btn_save = ttk.Button(f_actions, text="Export Figure #001", command=save_figure_callback)
     btn_save.grid(row=1, column=0, columnspan=2, padx=2, pady=1)
 
     if initial_filepath and os.path.exists(initial_filepath):
