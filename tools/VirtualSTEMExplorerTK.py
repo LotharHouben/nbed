@@ -31,6 +31,7 @@ def get_app_config_path() -> Path:
 CONFIG_FILE = get_app_config_path()
 
 DEFAULT_CONFIG = {
+    "theme": "dark",  # Options: "dark", "light"
     "cal_db_path": str(Path.home() / "MicroscopeCalibrationDB.json"),
     "left_cmap": "gray",
     "right_cmap": "turbo",
@@ -65,9 +66,40 @@ def save_config(cfg):
         print(f"Failed to save configuration to {CONFIG_FILE}: {e}")
 
 
+# --- Theme Styling Utility ---
+def apply_theme_styles(root, theme_mode="dark"):
+    """Applies desktop theme colors to Tkinter ttk widgets."""
+    style = ttk.Style(root)
+    style.theme_use('clam')
+
+    if theme_mode == "dark":
+        bg_dark = "#1e1e1e"
+        bg_panel = "#2d2d2d"
+        fg_text = "#ffffff"
+        accent_btn = "#3c3c3c"
+        active_btn = "#505050"
+
+        root.configure(bg=bg_dark)
+        
+        style.configure(".", background=bg_panel, foreground=fg_text, bordercolor="#444444")
+        style.configure("TFrame", background=bg_dark)
+        style.configure("TLabelframe", background=bg_panel, foreground=fg_text, bordercolor="#555555")
+        style.configure("TLabelframe.Label", background=bg_panel, foreground=fg_text)
+        style.configure("TLabel", background=bg_panel, foreground=fg_text)
+        style.configure("TButton", background=accent_btn, foreground=fg_text, bordercolor="#555555", padding=3)
+        style.map("TButton", background=[("active", active_btn)])
+        style.configure("TRadiobutton", background=bg_panel, foreground=fg_text)
+        style.map("TRadiobutton", background=[("active", bg_panel)])
+        style.configure("TCombobox", fieldbackground="#3a3a3a", background=accent_btn, foreground=fg_text)
+        style.configure("TEntry", fieldbackground="#3a3a3a", foreground=fg_text, insertcolor=fg_text)
+    else:
+        root.configure(bg="#f0f0f0")
+        style.theme_use('default')
+
+
 # --- Modal Dialogs ---
 class ConfigDialog(tk.Toplevel):
-    """Modal dialog to edit application configuration parameters."""
+    """Modal preferences dialog including theme configuration."""
     def __init__(self, parent, current_cfg):
         super().__init__(parent)
         self.title("VirtualSTEMExplorerTK - Preferences")
@@ -77,21 +109,32 @@ class ConfigDialog(tk.Toplevel):
         self.cfg = current_cfg.copy()
         self.updated = False
 
+        apply_theme_styles(self, self.cfg.get("theme", "dark"))
+
         f_main = ttk.Frame(self, padding=10)
         f_main.pack(fill=tk.BOTH, expand=True)
 
-        # 1. Calibration DB Path
+        # 1. UI Appearance / Theme
+        f_theme = ttk.LabelFrame(f_main, text="GUI Appearance", padding=8)
+        f_theme.grid(row=0, column=0, columnspan=2, sticky='ew', pady=5)
+
+        ttk.Label(f_theme, text="Theme Scheme:").grid(row=0, column=0, sticky='w', padx=4)
+        self.var_theme = tk.StringVar(value=self.cfg.get("theme", "dark"))
+        cb_theme = ttk.Combobox(f_theme, textvariable=self.var_theme, values=["dark", "light"], width=10, state="readonly")
+        cb_theme.grid(row=0, column=1, sticky='w', padx=4)
+
+        # 2. Calibration DB Path
         f_db = ttk.LabelFrame(f_main, text="Microscope Calibration Database", padding=8)
-        f_db.grid(row=0, column=0, columnspan=2, sticky='ew', pady=5)
+        f_db.grid(row=1, column=0, columnspan=2, sticky='ew', pady=5)
 
         ttk.Label(f_db, text="JSON DB Path:").grid(row=0, column=0, sticky='w')
         self.var_db_path = tk.StringVar(value=self.cfg.get("cal_db_path", ""))
         ttk.Entry(f_db, textvariable=self.var_db_path, width=45).grid(row=1, column=0, padx=2)
         ttk.Button(f_db, text="Browse...", command=self.browse_db).grid(row=1, column=1, padx=2)
 
-        # 2. Display Defaults
+        # 3. Display Defaults
         f_disp = ttk.LabelFrame(f_main, text="Colormap & Mask Defaults", padding=8)
-        f_disp.grid(row=1, column=0, columnspan=2, sticky='ew', pady=5)
+        f_disp.grid(row=2, column=0, columnspan=2, sticky='ew', pady=5)
 
         cmap_opts = ['gray', 'gray_r', 'inferno', 'magma', 'viridis', 'plasma', 'turbo', 'cividis', 'hsv', 'twilight', 'twilight_shifted']
 
@@ -103,27 +146,19 @@ class ConfigDialog(tk.Toplevel):
         self.var_r_cmap = tk.StringVar(value=self.cfg.get("right_cmap", "turbo"))
         ttk.Combobox(f_disp, textvariable=self.var_r_cmap, values=cmap_opts, width=10, state="readonly").grid(row=0, column=3, padx=4)
 
-        # Default dx & dy
-        ttk.Label(f_disp, text="Default dx:").grid(row=1, column=0, sticky='e', padx=4, pady=4)
+        ttk.Label(f_disp, text="Default dx/dy:").grid(row=1, column=0, sticky='e', padx=4, pady=4)
         self.var_dx = tk.StringVar(value=str(self.cfg.get("dx", 5)))
+        self.var_dy = tk.StringVar(value=str(self.cfg.get("dy", 5)))
         ttk.Entry(f_disp, textvariable=self.var_dx, width=4).grid(row=1, column=1, sticky='w', padx=4)
 
-        ttk.Label(f_disp, text="dy:").grid(row=1, column=2, sticky='e', padx=4, pady=4)
-        self.var_dy = tk.StringVar(value=str(self.cfg.get("dy", 5)))
-        ttk.Entry(f_disp, textvariable=self.var_dy, width=4).grid(row=1, column=3, sticky='w', padx=4)
-
-        # Default r_in & r_out (Both Entry widgets added below)
-        ttk.Label(f_disp, text="Default r_in:").grid(row=2, column=0, sticky='e', padx=4, pady=4)
+        ttk.Label(f_disp, text="Default r_in/r_out:").grid(row=1, column=2, sticky='e', padx=4, pady=4)
         self.var_rin = tk.StringVar(value=str(self.cfg.get("r_in", 0.0)))
-        ttk.Entry(f_disp, textvariable=self.var_rin, width=4).grid(row=2, column=1, sticky='w', padx=4)
-
-        ttk.Label(f_disp, text="r_out:").grid(row=2, column=2, sticky='e', padx=4, pady=4)
         self.var_rout = tk.StringVar(value=str(self.cfg.get("r_out", 25.0)))
-        ttk.Entry(f_disp, textvariable=self.var_rout, width=4).grid(row=2, column=3, sticky='w', padx=4)
+        ttk.Entry(f_disp, textvariable=self.var_rin, width=4).grid(row=1, column=3, sticky='w', padx=4)
 
-        # 3. Default Binning
+        # 4. Default Binning
         f_bin = ttk.LabelFrame(f_main, text="Default File Import Binning", padding=8)
-        f_bin.grid(row=2, column=0, columnspan=2, sticky='ew', pady=5)
+        f_bin.grid(row=3, column=0, columnspan=2, sticky='ew', pady=5)
 
         ttk.Label(f_bin, text="bin_scan (Y, X):").grid(row=0, column=0, sticky='e', padx=4)
         self.var_bs_y = tk.StringVar(value=str(self.cfg.get("bin_scan_y", 2)))
@@ -139,7 +174,7 @@ class ConfigDialog(tk.Toplevel):
 
         # Action Buttons
         f_btn = ttk.Frame(f_main)
-        f_btn.grid(row=3, column=0, columnspan=2, pady=8)
+        f_btn.grid(row=4, column=0, columnspan=2, pady=8)
         ttk.Button(f_btn, text="Save & Apply", command=self.on_save).pack(side=tk.LEFT, padx=5)
         ttk.Button(f_btn, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -153,6 +188,7 @@ class ConfigDialog(tk.Toplevel):
 
     def on_save(self):
         try:
+            self.cfg["theme"] = self.var_theme.get()
             self.cfg["cal_db_path"] = self.var_db_path.get().strip()
             self.cfg["left_cmap"] = self.var_l_cmap.get()
             self.cfg["right_cmap"] = self.var_r_cmap.get()
@@ -179,6 +215,7 @@ class FileImportDialog(tk.Toplevel):
         self.resizable(False, False)
         self.grab_set()
 
+        apply_theme_styles(self, initial_cfg.get("theme", "dark"))
         self.result = None
 
         ttk.Label(self, text="Select Master HDF5 File:").grid(row=0, column=0, columnspan=2, sticky='w', padx=10, pady=5)
@@ -243,7 +280,7 @@ class FileImportDialog(tk.Toplevel):
         self.destroy()
 
 
-# --- Main Explorer Function ---
+# --- Main Application Explorer ---
 def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     config = load_config()
     target_dict = {}
@@ -252,16 +289,15 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     root.title("VirtualSTEMExplorerTK")
     root.geometry("1400x950")
 
-    # Add an About handler:
-    def show_about_dialog():
-        messagebox.showinfo(
-        "About VirtualSTEMExplorerTK",
-        "VirtualSTEMExplorerTK v1.0\n"
-        "Interactive 4D-STEM Analysis Suite\n\n"
-        "Copyright © 2026 VirtualSTEM Project / Lothar Houben.\n"
-        "All rights reserved.")
+    # Apply Selected Theme
+    apply_theme_styles(root, config.get("theme", "dark"))
 
-    
+    # Matplotlib Theme Switcher
+    if config.get("theme", "dark") == "dark":
+        plt.style.use('dark_background')
+    else:
+        plt.style.use('default')
+
     state = {
         'myset': myset,
         'path': "",
@@ -281,7 +317,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     ruler1_state = {'active': False, 'p1': None, 'p2': None, 'length': 0.0}
     ruler2_state = {'active': False, 'p1': None, 'p2': None, 'dq': 0.0, 'd_spacing': 0.0}
 
-    # --- TOP CONTROL TOOLBAR (Placed above canvas) ---
+    # Top Control Bar
     top_bar = ttk.Frame(root, padding="6")
     top_bar.pack(side=tk.TOP, fill=tk.X)
 
@@ -294,7 +330,6 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     lbl_status = ttk.Label(top_bar, text="No dataset loaded. Click 'Open DECTRIS File' to start.", font=("Arial", 10, "italic"))
     lbl_status.pack(side=tk.LEFT, padx=12)
 
-    # Canvas Frame
     canvas_frame = ttk.Frame(root)
     canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -355,17 +390,13 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
 
     def compute_virtual_image(center_qx, center_qy, radius_in, radius_out, mode='Sum'):
         dety, detx = state['myset'].dim[2], state['myset'].dim[3]
-
-        # Guarantee 2D coordinate meshgrids matching detector dimensions (dety, detx)
         qy_2d, qx_2d = np.mgrid[:dety, :detx]
-
+        
         dist_sq = (qx_2d - center_qx)**2 + (qy_2d - center_qy)**2
         mask = (dist_sq >= radius_in**2) & (dist_sq <= radius_out**2)
-
+        
         if np.any(mask):
-            # Slicing along the flattened 2D mask dimension -> shape: (scany, scanx, N_mask_pixels)
             masked_data = state['myset'].data[:, :, mask]
-
             if mode == 'Sum':
                 vimage = np.sum(masked_data, axis=-1)
             elif mode == 'Variance':
@@ -375,18 +406,12 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
                 var_val = np.var(masked_data, axis=-1)
                 vimage = np.where(mean_val > 1e-6, var_val / (mean_val**2 + 1e-6), 0.0)
             elif mode in ['COM Mag', 'COM Azimuth']:
-                # Correct 2D mesh indexing using the 2D boolean mask
-                rel_qx = (qx_2d - center_qx)[mask]  # Shape: (N_mask_pixels,)
-                rel_qy = (qy_2d - center_qy)[mask]  # Shape: (N_mask_pixels,)
-
-                # Total intensity per scan position -> shape: (scany, scanx)
+                rel_qx = (qx_2d - center_qx)[mask]
+                rel_qy = (qy_2d - center_qy)[mask]
                 I_total = np.sum(masked_data, axis=-1)
                 I_total_safe = np.where(I_total > 1e-6, I_total, 1e-6)
-
-                # Center of mass calculation (weighted sum over mask pixels)
                 com_x = np.sum(masked_data * rel_qx, axis=-1) / I_total_safe
                 com_y = np.sum(masked_data * rel_qy, axis=-1) / I_total_safe
-
                 if mode == 'COM Mag':
                     vimage = np.hypot(com_x, com_y) * state['rec_samp']
                 else:
@@ -395,7 +420,6 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
                 vimage = np.sum(masked_data, axis=-1)
         else:
             vimage = np.zeros((state['scany'], state['scanx']))
-
         return vimage, mask
 
     def extract_avg_diffraction(center_y, center_x, radius_y, radius_x):
@@ -474,7 +498,6 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
         dety, detx = state['myset'].dim[2], state['myset'].dim[3]
         state['scany'] = scany; state['scanx'] = scanx
         state['dety'] = dety; state['detx'] = detx
-        state['qy_grid'], state['qx_grid'] = np.ogrid[:dety, :detx]
 
         state['x'] = scanx // 2
         state['y'] = scany // 2
@@ -541,7 +564,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
         sync_target_dict()
         canvas.draw()
 
-    # --- Mouse Handlers ---
+    # Mouse Handlers
     def onclick(event):
         if state['myset'] is None: return
         if event.inaxes == ax1:
@@ -624,13 +647,19 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     canvas.mpl_connect('button_press_event', onclick)
     canvas.mpl_connect('motion_notify_event', onmove)
 
-    # --- Actions ---
+    # Actions
     def open_config_dialog_action():
         nonlocal config
         dialog = ConfigDialog(root, config)
         root.wait_window(dialog)
         if dialog.updated:
-            config = load_config() # Refresh config
+            config = load_config()
+            apply_theme_styles(root, config.get("theme", "dark"))
+            if config.get("theme", "dark") == "dark":
+                plt.style.use('dark_background')
+            else:
+                plt.style.use('default')
+
             state['left_cmap'] = config["left_cmap"]
             state['right_cmap'] = config["right_cmap"]
             var_l_cmap.set(config["left_cmap"])
@@ -640,10 +669,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             var_rin.set(str(config["r_in"]))
             var_rout.set(str(config["r_out"]))
             if state['myset']:
-                artists['im1'].set_cmap(state['left_cmap'])
-                artists['im2'].set_cmap(state['right_cmap'])
-                refresh_spatial_roi()
-                refresh_detector_mask()
+                rebuild_plot()
 
     def open_file_dialog_action():
         dialog = FileImportDialog(root, config)
@@ -680,20 +706,18 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             except Exception as e:
                 messagebox.showerror("Loading Error", f"Failed to load file:\n{e}")
 
-    # --- Menu Bar ---
+    # Menu Bar
     menu_bar = tk.Menu(root)
     file_menu = tk.Menu(menu_bar, tearoff=0)
     file_menu.add_command(label="Open DECTRIS Master File...", command=open_file_dialog_action)
     file_menu.add_separator()
     file_menu.add_command(label="Settings...", command=open_config_dialog_action)
-    file_menu.add_command(label="About", command=show_about_dialog)
     file_menu.add_separator()
-    
     file_menu.add_command(label="Exit", command=root.quit)
     menu_bar.add_cascade(label="File", menu=file_menu)
     root.config(menu=menu_bar)
 
-    # --- Control Panel Frame (Bottom) ---
+    # Control Dock Frame
     ctrl_frame = ttk.Frame(root, padding="5")
     ctrl_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -730,7 +754,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
 
     cb_l_cmap.bind("<<ComboboxSelected>>", on_l_cmap_select)
 
-    # 2. Integration Mode Options
+    # 2. Mask Mode
     f_mode = ttk.LabelFrame(ctrl_frame, text="Mask Mode", padding="5")
     f_mode.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=2)
 
@@ -749,7 +773,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     for i, m in enumerate(modes):
         ttk.Radiobutton(f_mode, text=m, value=m, variable=var_mode, command=on_mode_change).grid(row=i % 3, column=i // 3, sticky='w')
 
-    # 3. Right Contrast Controls
+    # 3. Right Contrast
     f_right = ttk.LabelFrame(ctrl_frame, text="Right Panel Controls", padding="5")
     f_right.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=2)
 
@@ -822,8 +846,8 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
     f_actions = ttk.LabelFrame(ctrl_frame, text="Tools & Export", padding="5")
     f_actions.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=2)
 
-    btn_r1 = ttk.Button(f_actions, text="Ruler Real-Space")
-    btn_r2 = ttk.Button(f_actions, text="Ruler Diffraction")
+    btn_r1 = ttk.Button(f_actions, text="Ruler Real")
+    btn_r2 = ttk.Button(f_actions, text="Ruler Recip")
 
     def toggle_ruler1():
         if state['myset'] is None: return
@@ -835,7 +859,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             artists['ruler1_text'].set_visible(True)
             artists['ruler1_text'].set_text("Click Point A on Virtual Image...")
         else:
-            btn_r1.config(text="Ruler Real-Space")
+            btn_r1.config(text="Ruler Real")
             artists['ruler1_line'].set_data([], [])
             artists['ruler1_text'].set_visible(False)
         canvas.draw_idle()
@@ -851,7 +875,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
             artists['ruler2_text'].set_visible(True)
             artists['ruler2_text'].set_text("Click Point A on Diffraction Pattern...")
         else:
-            btn_r2.config(text="Ruler Diffraction")
+            btn_r2.config(text="Ruler Recip")
             artists['ruler2_line'].set_data([], [])
             artists['ruler2_text'].set_visible(False)
         canvas.draw_idle()
@@ -869,12 +893,12 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
         try:
             fig.savefig(filename, bbox_inches='tight', pad_inches=0.05)
             next_idx_new, _ = get_next_filename()
-            btn_save.config(text=f"Save figure #{next_idx_new:03d}")
+            btn_save.config(text=f"Save #{next_idx_new:03d}")
             messagebox.showinfo("Export Success", f"Successfully exported:\n{filename}")
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export figure:\n{e}")
 
-    btn_save = ttk.Button(f_actions, text="Save figure #001", command=save_figure_callback)
+    btn_save = ttk.Button(f_actions, text="Save #001", command=save_figure_callback)
     btn_save.grid(row=1, column=0, columnspan=2, padx=2, pady=1)
 
     if initial_filepath and os.path.exists(initial_filepath):
@@ -907,7 +931,7 @@ def VirtualSTEMExplorerTK(myset=None, initial_filepath=None):
 
 
 def main():
-    initial_file = ""
+
     VirtualSTEMExplorerTK(initial_filepath=None)
 
 if __name__ == "__main__":

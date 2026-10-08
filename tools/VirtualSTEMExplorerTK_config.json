@@ -2,12 +2,13 @@
     "cal_db_path": "/Users/houben/MicroscopeCalibrationDB.json",
     "left_cmap": "gray",
     "right_cmap": "turbo",
-    "dx": 2,
-    "dy": 2,
-    "r_in": 10.0,
-    "r_out": 25.0,
+    "dx": 5,
+    "dy": 5,
+    "r_in": 0.0,
+    "r_out": 10.0,
     "bin_scan_x": 2,
     "bin_scan_y": 2,
     "bin_det_x": 1,
-    "bin_det_y": 1
+    "bin_det_y": 1,
+    "theme": "dark"
 }
