@@ -45,6 +45,7 @@ dependencies = [
     "ipython",
     "ipywidgets",
     "pims>=0.7",
+    "customtkinter"
 ]
 
 
