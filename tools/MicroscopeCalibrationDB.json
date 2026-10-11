@@ -140,6 +140,163 @@
       }
       }
     ]  
+  },
+  "TFSTemScriptAndKernel":
+  {"EMPAD":
+    [ {
+      "mode": "STEM",
+      "submode": "Nanoprobe",
+      "voltage":
+      {"300000":{
+       "Cameralength": {
+	 "interpolation": "x: 19175.7/x - 0.12",
+          "unit": "1/nm",
+          "values": {
+            "1146.3": 16.53,
+            "2280.5": 8.2048
+          }
+		      },
+       "Magnification": {
+            "interpolation": "x: 184700928./x + 102.",
+            "unit": "nm",
+            "values": {
+            "80000": 2410.8
+          }
+        }
+       },
+       "200000": {
+	 "Cameralength": {
+            "interpolation": "x: 15320/x + 0.0033",
+            "unit": "1/nm",
+            "values": {
+            "286.3": 49.68,
+            "722.5": 14.98
+          }
+	 },
+       "Magnification": {
+            "interpolation": "x: 8.262E7/x+0.93",
+            "unit": "1/nm",
+            "values": {
+            "640000": 126.536,
+            "2550000": 31.615
+          }	
+	 
+      } 
+      }
+      }
+}
+    ],
+   "ELA":
+    [{
+      "mode": "STEM",
+      "submode": "NP:PROBE",
+      "subsetting": "7.4",
+      "voltage": {
+	"300000": {
+	  "Cameralength": {
+            "interpolation": "x: 1./x + 0.",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 184700928./x + 102.",
+            "unit": "nm",
+            "values": {
+            "80000": 2410.8
+            }
+          }		    
+	},
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 953.25/x + 1.88",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 9.989E7/x+0.6715",
+            "unit": "1/nm",
+            "values": {
+            "640000": 126.536,
+            "2550000": 31.615
+            }	
+	  }
+	}
+      }
+      },
+     {
+      "mode": "STEM",
+      "submode": "UP:PROBE",
+      "subsetting": "7.4",
+      "voltage": {
+	"300000": {
+	  "Cameralength": {
+            "interpolation": "x: 1195.7/x + 0.6531",
+            "unit": "1/nm",
+            "values": {
+            "37": 32.89,
+            "58": 21.43
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 184700928./x + 102.",
+            "unit": "nm",
+            "values": {
+            "80000": 2410.8
+            }
+          }		    
+	},
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 953.25/x + 1.88",
+            "unit": "1/nm",
+            "values": {
+            "46": 21.9111,
+            "91": 11.6636
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 8.234E7/x-54.599",
+            "unit": "1/nm",
+            "values": {
+            "24900": 3255.00,
+            "99500": 789.40
+            }	
+	  }
+	}
+      }
+     },
+     {
+      "mode": "STEM",
+      "submode": "UP:PROBE",
+      "subsetting": "ESI-11x9",
+      "voltage": {
+      	"200000": {
+	  "Cameralength": {
+            "interpolation": "x: 1279./x + 1.062",
+            "unit": "1/nm",
+            "values": {
+            "37": 35.52204800,
+            "115": 12.05913600
+          }
+	  },
+	  "Magnification": {
+            "interpolation": "x: 8.234E7/x-54.599",
+            "unit": "1/nm",
+            "values": {
+            "24900": 3255.00,
+            "99500": 789.40
+            }	
+	  }
+	}
+      }
+      }
+    ]  
 },
    "FEI Tecnai F20":
   {"Dectris ARINA Si":
