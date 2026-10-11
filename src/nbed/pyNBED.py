@@ -64,6 +64,78 @@ class pyNBED:
         self.qsamplinggrid=np.sqrt(self.qsamplinggrid2)
         return
 
+    def _parse_pantarhei_npz(self, fh, bin_scan=(1, 1), bin_det=(1, 1)):
+        """Helper to parse metadata and perform 4D block-summing binning efficiently."""
+        self.metadata = {}
+        
+        # 1. Grab raw metadata reference from npz archive
+        raw_meta = None
+        if "meta_data" in fh:
+            raw_meta = fh['meta_data']
+        elif "meta_data_json" in fh:
+            raw_meta = fh['meta_data_json']
+
+        # 2. Extract and parse contents of raw_meta
+        if raw_meta is not None:
+            # Extract scalar payload from 0D array if needed
+            val = raw_meta.item() if getattr(raw_meta, 'ndim', 0) == 0 else raw_meta
+
+            if isinstance(val, dict):
+                self.metadata = val
+            elif isinstance(val, (str, bytes)):
+                if isinstance(val, bytes):
+                    val = val.decode('utf-8')
+                try:
+                    data_parsed = json.loads(val)
+                    self.metadata = data_parsed[0] if isinstance(data_parsed, list) else data_parsed
+                except json.JSONDecodeError:
+                    self.metadata = {}
+            elif isinstance(val, np.ndarray) and val.dtype.kind in {'U', 'S', 'O'}:
+                # Handles 1D string array like array(['[{...}]'], dtype='<U5548')
+                try:
+                    str_val = str(val[0])
+                    data_parsed = json.loads(str_val)
+                    self.metadata = data_parsed[0] if isinstance(data_parsed, list) else data_parsed
+                except (json.JSONDecodeError, IndexError):
+                    self.metadata = {}
+
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+
+        # 3. Assign binning keys cleanly
+        bin_scan_x, bin_scan_y = bin_scan
+        bin_det_x, bin_det_y = bin_det
+        self.metadata['bin_scan'] = (bin_scan_x, bin_scan_y)
+        self.metadata['bin_det'] = (bin_det_x, bin_det_y)
+
+        # 4. Load & Bin 4D Data
+        print(f"pyNBED: Loading data with bin_scan={bin_scan}, bin_det={bin_det} ...")
+        raw_arr = fh['data']
+        
+        if bin_scan == (1, 1) and bin_det == (1, 1):
+            self.data = np.array(raw_arr)
+            print("        finished")
+            return
+
+        sy, sx, dy, dx = raw_arr.shape
+        crop_sy = (sy // bin_scan_y) * bin_scan_y
+        crop_sx = (sx // bin_scan_x) * bin_scan_x
+        crop_dy = (dy // bin_det_y) * bin_det_y
+        crop_dx = (dx // bin_det_x) * bin_det_x
+
+        cropped_view = raw_arr[:crop_sy, :crop_sx, :crop_dy, :crop_dx]
+
+        new_shape = (
+            crop_sy // bin_scan_y, bin_scan_y,
+            crop_sx // bin_scan_x, bin_scan_x,
+            crop_dy // bin_det_y,  bin_det_y,
+            crop_dx // bin_det_x,  bin_det_x
+        )
+
+        self.data = cropped_view.reshape(new_shape).sum(axis=(1, 3, 5, 7))
+        print("        finished")
+        
+    
     def LoadFile (self, fname, type='PantaRhei', **kwargs):
         """ Load a 4D STEM dataset  
 
@@ -74,6 +146,10 @@ class pyNBED:
         optional keyword arguments for the data types and their defaults
 
         'PantaRhei' - is_zipfile=False:  # uncompress datafile that has been compressed with a standard zip utility [default: False]
+                      bin_scan=(1, 1),   # tuple, scan frame binning 
+                      bin_det=(1, 1),    # tuple, detector frame binning
+                      reduction='sum',   # numerical operation for binning, 'sum' preserves electron counts;
+                                         # 'mean' preserves scale.
         'DECTRIS'   - scan_shape=None,   # tuple, (scan_y, scan_x)
                       bin_scan=(1, 1),   # tuple, scan frame binning 
                       bin_det=(1, 1),    # tuple, detector frame binning
@@ -112,40 +188,45 @@ class pyNBED:
         act_args = {**kwargs_defaults, **kwargs}
         self.fname=fname
         self.type=type
+        #
+        # Load PantaRhei files
+        #
         if self.type == 'PantaRhei':
-            self.type=type 
-            if act_args['is_zipfile']:
-                # Open the standard zip archive
-                thearch=self.fname+".zip"
-                print("pyNBED: Opening zip-archive "+thearch)
+            if act_args.get('is_zipfile', False):
+                thearch = self.fname + ".zip" if not self.fname.endswith(".zip") else self.fname
+                print(f"pyNBED: Opening zip-archive {thearch}")
+                
                 with zipfile.ZipFile(thearch, 'r') as zipped_file:
-                    # Open the specific .prz file inside the zip
                     directory, filename = os.path.split(self.fname)
-                    with zipped_file.open(filename) as file_entry:
-                        # Wrap in BytesIO so numpy can read/seek through the binary stream
-                        data_bytes = io.BytesIO(file_entry.read())
-                        print("pyNBED: Loading object descriptor "+self.fname)
-                        fh = np.load(data_bytes, allow_pickle=True)
+                    target_file = filename if filename in zipped_file.namelist() else zipped_file.namelist()[0]
+                    
+                    with zipped_file.open(target_file) as file_entry:
+                        print(f"pyNBED: Loading object descriptor {self.fname}")
+                        with io.BytesIO(file_entry.read()) as data_bytes:
+                            with np.load(data_bytes, allow_pickle=True) as fh:
+                                # print(f'bin_scan={bin_scan}, bin_det={bin_det}')
+                                self._parse_pantarhei_npz(
+                                    fh, 
+                                    bin_scan=act_args['bin_scan'], 
+                                    bin_det=act_args['bin_det']
+                                )
+                                #metadata_list = json.loads(fh['meta_data_json'].item())
+                                #self.metadata = metadata_list[0]
             else:
-                print("pyNBED: Loading object descriptor "+self.fname)
-                fh=np.load(self.fname, allow_pickle=True)
-            self.metadata={}
-            if "meta_data" in fh:
-                self.metadata=fh['meta_data']
-            else:
-                if "meta_data_json" in fh:
-                    # 1. Extract the scalar string using `.item()`
-                    # 2. Parse the JSON string into a list of dictionaries
-                    data_list = json.loads(fh['meta_data_json'].item())
-                    # 3. Access the  dictionary, the JSON string is a 1-item array: [...])
-                    self.metadata = data_list[0]
-            # load data array and report dimensions
-            print("pyNBED: Loading data ...")
-            self.data=fh['data']
-            print("        finished")
-            self.dim=self.data.shape
-            print("pyNBED: array dimensions:", self.dim) 
+                print(f"pyNBED: Loading object descriptor {self.fname}")
+                with np.load(self.fname, allow_pickle=True) as fh:
+                    self._parse_pantarhei_npz(
+                        fh, 
+                        bin_scan=act_args['bin_scan'], 
+                        bin_det=act_args['bin_det']
+                    )
+                    #metadata_list = json.loads(fh['meta_data_json'].item())
+                    #self.metadata = metadata_list[0]
+            self.dim = self.data.shape
+            print("pyNBED: array dimensions (after binning):", self.dim)
             self.PrepareSamplingGrid()
+
+        
         if self.type == 'EMPAD':
             self.type=type
             print("pyNBED: Loading EMPAD data from "+self.fname)
