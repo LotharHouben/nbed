@@ -37,6 +37,79 @@ def read_empad(fname):
     return data[:,:,0:128,:]
 
 
+import os
+import numpy as np
+
+def read_empad(fname, bin_scan=(1, 1), bin_det=(1, 1), **kwargs):
+    """
+    Reads an EMPAD raw data file and returns a 4D numpy array with optional binning.
+
+    EMPAD files consist of 130x128 arrays: 128x128 detector pixels followed by 
+    2 metadata rows. Metadata at index [129, 12] and [129, 13] contains scan positions.
+
+    Parameters:
+        fname (str): Path to the EMPAD raw file.
+        bin_scan (tuple): Binning factors for spatial scan dimensions (bin_scan_y, bin_scan_x).
+        bin_det (tuple): Binning factors for detector dimensions (bin_det_y, bin_det_x).
+
+    Returns:
+        np.ndarray: 4D array of shape (scany_binned, scanx_binned, dety_binned, detx_binned).
+    """
+    print(f"Reading EMPAD raw data file: {fname}")
+    rows, cols = 130, 128
+    
+    # 1. Parse File Dimensions
+    filesize = os.path.getsize(fname)
+    framesize = rows * cols * 4  # 4 bytes per float32 pixel
+    n_frames = int(filesize // framesize)
+
+    # 2. Extract Metadata from First and Last Frames for Scan Shape
+    with open(fname, "rb") as fid:
+        # Read first frame metadata (rows 128 and 129)
+        fid.seek(128 * cols * 4)
+        first_meta = np.fromfile(fid, dtype=np.float32, count=2 * cols).reshape(2, cols)
+        
+        # Read last frame metadata
+        fid.seek((n_frames - 1) * framesize + 128 * cols * 4)
+        last_meta = np.fromfile(fid, dtype=np.float32, count=2 * cols).reshape(2, cols)
+
+    # Scan positions stored in row 129 (index 1 inside metadata slice)
+    dx = int(1 + last_meta[1, 12] - first_meta[1, 12])
+    dy = int(1 + last_meta[1, 13] - first_meta[1, 13])
+    
+    scany, scanx = dy, dx
+    dety, detx = 128, 128
+
+    bs_y, bs_x = bin_scan
+    bd_y, bd_x = bin_det
+
+    # 3. Read Raw Floating Point Binary Buffer
+    with open(fname, "rb") as fid:
+        raw_buffer = np.fromfile(fid, dtype=np.float32)
+
+    # Reshape into raw 3D array (Frames, 130, 128) and strip the 2 metadata rows
+    raw_cube = raw_buffer.reshape(n_frames, rows, cols)[:, :dety, :]  # Shape: (scany * scanx, 128, 128)
+    del raw_buffer  # Free flat buffer
+
+    # 4. Reshape to 4D (scany, scanx, dety, detx)
+    data = raw_cube.reshape(scany, scanx, dety, detx)
+
+    # 5. Apply Fast Binning via Block Summing
+    if bs_y > 1 or bs_x > 1:
+        trim_y = (scany // bs_y) * bs_y
+        trim_x = (scanx // bs_x) * bs_x
+        data = data[:trim_y, :trim_x, :, :]
+        data = data.reshape(trim_y // bs_y, bs_y, trim_x // bs_x, bs_x, dety, detx).sum(axis=(1, 3))
+
+    if bd_y > 1 or bd_x > 1:
+        trim_dety = (dety // bd_y) * bd_y
+        trim_detx = (detx // bd_x) * bd_x
+        data = data[:, :, :trim_dety, :trim_detx]
+        data = data.reshape(data.shape[0], data.shape[1], trim_dety // bd_y, bd_y, trim_detx // bd_x, bd_x).sum(axis=(3, 5))
+
+    return data
+
+
 def _h5_group_to_dict(h5_obj):
     """Recursively converts HDF5 attributes and scalar datasets into a Python dict."""
     out = {}

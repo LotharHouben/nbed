@@ -100,7 +100,10 @@ class pyNBED:
                     self.metadata = {}
 
         if not isinstance(self.metadata, dict):
+            print(f"pyNBED: Loading metadata failed ...")
             self.metadata = {}
+        else:
+            print(f"metadata is {self.metadata}")
 
         # 3. Assign binning keys cleanly
         bin_scan_x, bin_scan_y = bin_scan
@@ -230,7 +233,7 @@ class pyNBED:
         if self.type == 'EMPAD':
             self.type=type
             print("pyNBED: Loading EMPAD data from "+self.fname)
-            self.data=read_empad(self.fname)
+            self.data=read_empad(self.fname, bin_scan=act_args['bin_scan'], bin_det=act_args['bin_det'])
             self.metadata=None
             self.dim=self.data.shape
             print("pyNBED: array dimensions:", self.dim) 
