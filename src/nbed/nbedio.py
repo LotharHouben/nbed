@@ -5,40 +5,118 @@ import hdf5plugin
 import dask.array as da
 import psutil
 from dask.diagnostics import ProgressBar
+import math
+from typing import List, Tuple, Optional
 
-def read_empad(fname):
+
+def suggest_scan_shapes(nimages: int, max_suggestions: int = 5) -> List[Tuple[int, int]]:
     """
-    Reads the EMPAD file at filename, returning a 4D numpy array .
-
-    EMPAD files are 130x128 arrays, consisting of 128x128 arrays of data followed by
-    two rows of metadata.  The metadata holds the scan size.
-    The function determines the scan size by extracting the first and last frames' scan position.
-    Then the data set is shaped.
-
-    Arguments:
-        fname     path to the EMPAD file
-
-    Returns:
-        data      datacube, excluding the metadata rows.
+    Suggests likely 2D scan dimensions (scan_y, scan_x) for a given total frame count,
+    ordered from most likely (square or power-of-two sub-grids) to general integer factor pairs.
     """
-    print("Reading EMPAD raw data file "+fname)
-    rows = 130
-    cols = 128
-    filesize = os.path.getsize(fname)
-    framesize = rows * cols * 4  # 4 bytes per pixel
-    NFrames = filesize / framesize
-    data_shape = (int(NFrames), rows, cols)
-    with open(fname, "rb") as fid:
-        data = np.fromfile(fid, np.float32).reshape(data_shape)[:, :rows, :]
-    # Get the scan shape
-    (dx,dy)=(1+data[-1,129:130,12]-data[0,129:130,12],1+data[-1,129:130,13]-data[0,129:130,13])
-    data_shape=(int(dx.item()),int(dy.item()),rows,cols)  
-    data=data.reshape(data_shape)
-    return data[:,:,0:128,:]
+    if nimages <= 0:
+        return []
+
+    candidates = []
+    seen = set()
+
+    def add_pair(sy: int, sx: int, priority: int, label: str):
+        if sy * sx == nimages and (sy, sx) not in seen:
+            seen.add((sy, sx))
+            # Sort key: priority first (lower is better), then aspect ratio closer to 1
+            aspect_penalty = abs(math.log2(sy / sx))
+            candidates.append((priority, aspect_penalty, (sy, sx), label))
+
+    # --- 1. Check exact square: N x N ---
+    sqrt_n = int(math.isqrt(nimages))
+    if sqrt_n * sqrt_n == nimages:
+        add_pair(sqrt_n, sqrt_n, priority=1, label="Square (1:1)")
+
+    # --- 2. Check standard STEM fractions (2:1, 4:1, 8:1, 16:1, 4:3, 3:2) ---
+    # Case: nimages = N * (N / k)  =>  k * nimages = N^2  =>  N = sqrt(k * nimages)
+    power_of_two_fractions = [2, 4, 8, 16, 32]
+    for k in power_of_two_fractions:
+        # Check both N * (N / k) [horizontal/vertical stripe]
+        target_sq = nimages * k
+        N = int(math.isqrt(target_sq))
+        if N * N == target_sq and N % k == 0:
+            add_pair(N // k, N, priority=2, label=f"Fraction 1:{k}")
+            add_pair(N, N // k, priority=2, label=f"Fraction {k}:1")
+
+    # Common standard photo/sensor aspect ratios (e.g. 4:3)
+    standard_ratios = [(4, 3), (16, 9)]
+    for rx, ry in standard_ratios:
+        # nimages = (rx * m) * (ry * m) = rx * ry * m^2
+        denom = rx * ry
+        if nimages % denom == 0:
+            m2 = nimages // denom
+            m = int(math.isqrt(m2))
+            if m * m == m2:
+                add_pair(ry * m, rx * m, priority=3, label=f"Ratio {rx}:{ry}")
+                add_pair(rx * m, ry * m, priority=3, label=f"Ratio {ry}:{rx}")
+
+    # --- 3. Fallback: Find all integer factor pairs closest to square ---
+    factor_pairs = []
+    step_limit = max(1, sqrt_n)
+    for sy in range(step_limit, 0, -1):
+        if nimages % sy == 0:
+            sx = nimages // sy
+            factor_pairs.append((sy, sx))
+            if sy != sx:
+                factor_pairs.append((sx, sy))
+
+    for sy, sx in factor_pairs:
+        add_pair(sy, sx, priority=4, label="Factorization")
+
+    # Sort candidates by:
+    # 1. Priority tier (exact square -> power-of-two fractions -> standard ratios -> general factors)
+    # 2. Closeness to square (|log2(sy / sx)|)
+    # 3. Conventional scan orientation (prefer scan_y <= scan_x if aspect ratio is identical)
+    candidates.sort(key=lambda item: (item[0], item[1], item[2][0] > item[2][1]))
+
+    return [pair for _, _, pair, _ in candidates[:max_suggestions]]
 
 
-import os
-import numpy as np
+def deduce_scan_shape(nimages: int) -> Tuple[int, int]:
+    """Returns the single most likely (scan_y, scan_x) tuple."""
+    suggestions = suggest_scan_shapes(nimages, max_suggestions=1)
+    if suggestions:
+        return suggestions[0]
+    return (1, nimages)
+
+
+#def read_empad(fname):
+#    """
+#    Reads the EMPAD file at filename, returning a 4D numpy array .
+#
+#    EMPAD files are 130x128 arrays, consisting of 128x128 arrays of data followed by
+#    two rows of metadata.  The metadata holds the scan size.
+#    The function determines the scan size by extracting the first and last frames' scan position.
+#    Then the data set is shaped.
+
+# Arguments:
+#     fname     path to the EMPAD file
+
+# Returns:
+#     data      datacube, excluding the metadata rows.
+# """
+# print("Reading EMPAD raw data file "+fname)
+# rows = 130
+# cols = 128
+# filesize = os.path.getsize(fname)
+# framesize = rows * cols * 4  # 4 bytes per pixel
+# NFrames = filesize / framesize
+# data_shape = (int(NFrames), rows, cols)
+# with open(fname, "rb") as fid:
+#     data = np.fromfile(fid, np.float32).reshape(data_shape)[:, :rows, :]
+# # Get the scan shape
+# (dx,dy)=(1+data[-1,129:130,12]-data[0,129:130,12],1+data[-1,129:130,13]-data[0,129:130,13])
+# data_shape=(int(dx.item()),int(dy.item()),rows,cols)  
+# data=data.reshape(data_shape)
+# return data[:,:,0:128,:]
+
+
+
 
 def read_empad(fname, bin_scan=(1, 1), bin_det=(1, 1), **kwargs):
     """
@@ -202,21 +280,27 @@ def load_dectris_dask_binned(
 
         # Automatically determine scan shape if not provided
         if scan_shape is None:
+            print(f"Trying to obtain scan shape")
             scan_y_node = f.get('/entry/instrument/scan/Ny') or f.get('/entry/instrument/NDArray/Ny')
             scan_x_node = f.get('/entry/instrument/scan/Nx') or f.get('/entry/instrument/NDArray/Nx')
 
             if scan_y_node is not None and scan_x_node is not None:
                 scan_y = int(scan_y_node[()])
                 scan_x = int(scan_x_node[()])
-            elif '/entry/instrument/detector/ntrigger' in f:
-                n_frames = int(f['/entry/instrument/detector/ntrigger'][()])
-                side = int(np.sqrt(n_frames))
-                if side * side == n_frames:
-                    scan_y, scan_x = side, side
-                else:
-                    raise ValueError(f"Cannot infer square scan shape from total frame count ({n_frames}). Pass `scan_shape=(Ny, Nx)`.")
             else:
-                raise KeyError("Could not automatically infer scan shape. Please pass `scan_shape=(Ny, Nx)`.")
+                print(f"Trying to guess scan shape from number of frames")
+                if '/entry/instrument/detector/detectorSpecific/ntrigger' in f:
+                    n_frames = int(f['/entry/instrument/detector/detectorSpecific/ntrigger'][()])
+                    print(f"Number of frames: {n_frames}")
+                    scan_y, scan_x = deduce_scan_shape(n_frames)
+                    print(f"First guess: ({scan_y,scan_x})")
+                    if not scan_y*scan_x == n_frames:
+                        raise ValueError(f"Cannot infer square scan shape from total frame count ({n_frames}). Pass `scan_shape=(Ny, Nx)`.")
+                        raise KeyError("Could not automatically infer scan shape. Please pass `scan_shape=(Ny, Nx)`.")
+                else:
+                    print(f"Number of frames is not available")
+                    raise KeyError("Could not automatically infer scan shape. Please pass `scan_shape=(Ny, Nx)`.")
+  
         else:
             scan_y, scan_x = scan_shape
 

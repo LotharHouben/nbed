@@ -18,6 +18,7 @@ import io
 import zipfile
 
 
+
 # A class for formatting ndarrays for json export
 
 class NpEncoder(json.JSONEncoder):
@@ -139,6 +140,7 @@ class pyNBED:
         print("        finished")
         
     
+        
     def LoadFile (self, fname, type='PantaRhei', **kwargs):
         """ Load a 4D STEM dataset  
 
@@ -253,7 +255,7 @@ class pyNBED:
                 print(f"pyNBED: Magnification {mag}, Camera Length {cl}")
                 
             else:
-                print(f"Metadata file missing: {metadata_filepath}")
+                print(f"EM Metadata file missing: {metadata_filepath}")
                 
             try:
                 self.data, self.metadata=load_dectris_dask_binned(self.fname,
