@@ -676,44 +676,44 @@ class pyNBED:
         if shortcut is None:
             par={
                 'feature_size':7, 
-                'feature_minmass':2.,
+                'feature_minmass':0.2,
                 'feature_separation':8,
-                'feature_percentile':65.,
-                'feature_threshold':1.,
+                'feature_percentile':1.,
+                'feature_threshold':0.001,
                 'noise_size':1.,
                 'smooth_size': None,
                 'frame_cmin':1.,
                 'frame_cmax':10.,
                 'frame_cutoff': 0.,
-                'conv2D':True
+                'conv2D':False
             }
         if (shortcut == 'ELA'):
             par={
                 'feature_size':7, 
-                'feature_minmass':2.,
+                'feature_minmass':0.2,
                 'feature_separation':8,
-                'feature_percentile':65.,
-                'feature_threshold':1.,
+                'feature_percentile':1.,
+                'feature_threshold':0.001,
                 'noise_size':1.,
                 'smooth_size': None,
                 'frame_cmin':1.,
                 'frame_cmax':10.,
                 'frame_cutoff': 0.,
-                'conv2D':True
+                'conv2D':False
             } 
         if (shortcut == 'ARINA'):
             par={
                 'feature_size':7, 
-                'feature_minmass':2.,
+                'feature_minmass':0.2,
                 'feature_separation':8,
-                'feature_percentile':65.,
-                'feature_threshold':1.,
+                'feature_percentile':1.,
+                'feature_threshold':0.001,
                 'noise_size':1.,
                 'smooth_size': None,
                 'frame_cmin':1.,
                 'frame_cmax':10.,
                 'frame_cutoff': 0.,
-                'conv2D':True,
+                'conv2D':False,
             } 
         if (shortcut == 'EMPAD'):
             par={

@@ -19,6 +19,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle, Circle, Polygon
 
 import nbed
+import trackpy as tp
 
 
 # --- Path & Config Management ---
@@ -39,6 +40,21 @@ DEFAULT_RING_PRESETS = {
     "Ice (P63mm)": [2.571, 2.73, 3.75, 4.45, 5.13, 5.22],
     "Gold (Au)": [2.12, 2.45, 3.47, 4.06, 4.24, 4.90],
     "Silicon (Si)": [1.57, 2.56, 3.01, 3.62, 3.95, 4.44]
+}
+
+DEFAULT_PEAK_PARAMS = {
+    'fit_scale_linear': False,
+    'feature_size': 7,
+    'feature_minmass': 2.0,
+    'feature_separation': 8,
+    'feature_percentile': 0.0,
+    'noise_size': 1.0,
+    'feature_threshold': 0.5,
+    'smooth_size': 0,
+    'frame_cmin': 1.0,
+    'frame_cmax': 10.0,
+    'conv2D': False,
+    'frame_cutoff': 0.0
 }
 
 DEFAULT_CONFIG = {
@@ -64,7 +80,9 @@ DEFAULT_CONFIG = {
     "eps11": 1.0,
     "eps12": 0.0,
     "eps21": 0.0,
-    "eps22": 1.0
+    "eps22": 1.0,
+    "detector_preset": "ELA",
+    "fit_scale_linear": False
 }
 
 
@@ -104,6 +122,271 @@ def parse_ring_radii(str_val: str):
             except ValueError:
                 pass
     return radii
+
+
+def PeakDetection(img, params=None, origin='lower', lin=False):        
+    """ Auto-detect diffraction peaks in a normalized diffraction frame.
+    Uses trackpy (Crocker-Grier centroid-finding algorithm).
+    """
+    if params is None:
+        params = DEFAULT_PEAK_PARAMS.copy()
+
+    feat_sz = int(params.get('feature_size', 7))
+    if feat_sz % 2 == 0:
+        feat_sz += 1
+
+    feat_minmass = float(params.get('feature_minmass', 2.0))
+    feat_sep = int(params.get('feature_separation', feat_sz + 1))
+    feat_perc = float(params.get('feature_percentile', 0.0))
+    noise_sz = float(params.get('noise_size', 1.0))
+    thresh = float(params.get('feature_threshold', 0.5))
+    smooth_sz = params.get('smooth_size', None)
+    if smooth_sz is not None and smooth_sz <= 0:
+        smooth_sz = None
+
+    conv2D = bool(params.get('conv2D', False))
+
+    proc_img = np.array(img, dtype=np.float64, copy=True)
+    cutoff = float(params.get("frame_cutoff", 0.0))
+    if cutoff > 0.0:
+        proc_img[proc_img < cutoff] = 0.0
+    else:
+        proc_img[proc_img < 0.0] = 0.0
+
+    framepeaklist = list()
+    halfframedim = [proc_img.shape[1] / 2.0, proc_img.shape[0] / 2.0]
+
+    if conv2D and hasattr(nbed, 'convolve2D'):
+        conv_kernel = 1.0 / 9.0 * np.ones((3, 3))
+        filtim = nbed.convolve2D(proc_img, conv_kernel, padding=2)
+        filtim[filtim < 0.0] = 0.0
+    else:
+        filtim = proc_img
+
+    target_img = filtim if lin else np.log1p(filtim)
+
+    # --- Debug: Print Header and Frame Statistics ---
+    print("\n" + "=" * 70)
+    print(" TRACKPY PEAK DETECTION DEBUG INFO")
+    print("=" * 70)
+    print(f"  Scale Mode       : {'Linear' if lin else 'Log (log1p)'}")
+    print(f"  Frame Min / Max  : {float(np.min(target_img)):.4f} / {float(np.max(target_img)):.4f}")
+    print(f"  Frame Mean / Std : {float(np.mean(target_img)):.4f} / {float(np.std(target_img)):.4f}")
+    print(f"  Parameters:")
+    print(f"    diameter (feat_sz) : {feat_sz}")
+    print(f"    threshold          : {thresh}")
+    print(f"    minmass            : {feat_minmass}")
+    print(f"    percentile         : {feat_perc}")
+    print(f"    separation         : {feat_sep}")
+    print(f"    noise_size         : {noise_sz}")
+    print(f"    smoothing_size     : {smooth_sz}")
+    print(f"    conv2D             : {conv2D}")
+    print("-" * 70)
+
+    f = tp.locate(
+        target_img,
+        diameter=feat_sz,
+        noise_size=noise_sz,
+        threshold=thresh,
+        minmass=feat_minmass,
+        percentile=feat_perc,
+        separation=feat_sep,
+        smoothing_size=smooth_sz,
+        invert=False,
+        engine="python"
+    )
+
+    if f is not None and len(f) > 0:
+        q = np.hypot(f['x'].values - halfframedim[0], f['y'].values - halfframedim[1])
+        f.insert(1, "q", q, True)
+        f = f.sort_values(by=['q'], ascending=True)
+
+        cols_to_show = [col for col in ['x', 'y', 'mass', 'signal', 'size', 'raw_mass', 'q'] if col in f.columns]
+        print(f"  Found {len(f)} candidate peaks. DataFrame:")
+        print(f[cols_to_show].to_string(index=True))
+        print("=" * 70 + "\n")
+
+        framepeaklist.append({
+            'x': f['x'].values - halfframedim[0],
+            'y': f['y'].values - halfframedim[1],
+            'q': f['q'].values,
+            'mass': f['mass'].values,
+            'size': f['size'].values,
+            'raw_mass': f['raw_mass'].values
+        })
+    else:
+        print("  --> 0 peaks found with current threshold/minmass criteria.")
+        print("      HINT: Check if 'threshold' or 'minmass' is set too high,")
+        print("            or if 'feature_percentile' is rejecting peaks.")
+        print("=" * 70 + "\n")
+
+    return framepeaklist
+
+
+# --- Non-Modal Peak Detection Parameter Dialog ---
+class PeakDetectionConfigDialog(ctk.CTkToplevel):
+    def __init__(self, parent, state, app_config, on_apply_callback):
+        super().__init__(parent)
+        self.title("Peak Detection Parameters")
+        self.geometry("490x660")
+        self.resizable(False, False)
+
+        self.state = state
+        self.app_config = app_config
+        self.on_apply_callback = on_apply_callback
+
+        f_main = ctk.CTkFrame(self, corner_radius=10)
+        f_main.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        preset_name = self.state.get('detector_preset', 'ELA')
+        f_title = ctk.CTkFrame(f_main, fg_color="transparent")
+        f_title.pack(fill=tk.X, padx=10, pady=(6, 4))
+        
+        self.lbl_title = ctk.CTkLabel(
+            f_title, 
+            text=f"Peak Detection Settings ({preset_name})", 
+            font=("Arial", 13, "bold")
+        )
+        self.lbl_title.pack(side=tk.LEFT)
+
+        f_fields = ctk.CTkScrollableFrame(f_main, height=490)
+        f_fields.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        params = self.state['peak_params']
+        self.vars = {}
+
+        # --- Section 1: Core Parameters (Primary Controls) ---
+        ctk.CTkLabel(f_fields, text="Core Parameters", font=("Arial", 11, "bold"), text_color="#00e5ff").grid(
+            row=0, column=0, columnspan=2, sticky='w', padx=6, pady=(4, 2)
+        )
+
+        lbl_scale = ctk.CTkLabel(f_fields, text="Fitting Intensity Scale:", anchor='w')
+        lbl_scale.grid(row=1, column=0, sticky='w', padx=6, pady=4)
+
+        is_lin = params.get('fit_scale_linear', False)
+        self.var_scale_mode = ctk.StringVar(value="Linear" if is_lin else "Log")
+        self.seg_scale = ctk.CTkSegmentedButton(f_fields, values=["Linear", "Log"], variable=self.var_scale_mode, width=130)
+        self.seg_scale.grid(row=1, column=1, sticky='e', padx=6, pady=4)
+
+        primary_field_defs = [
+            ("feature_size", "Feature Diameter (odd px):", int, params.get('feature_size', 7)),
+            ("feature_threshold", "Feature Threshold:", float, params.get('feature_threshold', 0.5)),
+            ("feature_minmass", "Min Integrated Mass:", float, params.get('feature_minmass', 2.0))
+        ]
+
+        curr_row = 2
+        for key, label_txt, val_type, current_val in primary_field_defs:
+            lbl = ctk.CTkLabel(f_fields, text=label_txt, anchor='w')
+            lbl.grid(row=curr_row, column=0, sticky='w', padx=6, pady=4)
+
+            var = ctk.StringVar(value=str(current_val))
+            widget = ctk.CTkEntry(f_fields, textvariable=var, width=120)
+            widget.grid(row=curr_row, column=1, sticky='e', padx=6, pady=4)
+
+            self.vars[key] = (var, val_type)
+            curr_row += 1
+
+        # --- Visual Divider ---
+        f_divider = ctk.CTkFrame(f_fields, height=2, fg_color="#37474f")
+        f_divider.grid(row=curr_row, column=0, columnspan=2, sticky="ew", padx=6, pady=(12, 6))
+        curr_row += 1
+
+        lbl_sep = ctk.CTkLabel(f_fields, text="Fine-Tuning & Filtering Controls", font=("Arial", 11, "bold"), text_color="#90a4ae")
+        lbl_sep.grid(row=curr_row, column=0, columnspan=2, sticky='w', padx=6, pady=(2, 6))
+        curr_row += 1
+
+        # --- Section 2: Secondary / Fine-Tuning Parameters ---
+        secondary_field_defs = [
+            ("feature_separation", "Min Separation (px):", int, params.get('feature_separation', 8)),
+            ("feature_percentile", "Threshold Percentile (%):", float, params.get('feature_percentile', 0.0)),
+            ("noise_size", "Noise Size (px, std 1.0):", float, params.get('noise_size', 1.0)),
+            ("smooth_size", "Boxcar Smooth Size (0=None):", int, params.get('smooth_size', 0) or 0),
+            ("frame_cutoff", "Frame Cutoff Floor:", float, params.get('frame_cutoff', 0.0)),
+            ("frame_cmax", "Contrast Clip Max:", float, params.get('frame_cmax', 10.0)),
+            ("conv2D", "Perform 2D Convolution:", bool, params.get('conv2D', False))
+        ]
+
+        for key, label_txt, val_type, current_val in secondary_field_defs:
+            lbl = ctk.CTkLabel(f_fields, text=label_txt, anchor='w')
+            lbl.grid(row=curr_row, column=0, sticky='w', padx=6, pady=4)
+
+            if val_type == bool:
+                var = tk.BooleanVar(value=bool(current_val))
+                widget = ctk.CTkCheckBox(f_fields, text="", variable=var, width=28)
+            else:
+                var = ctk.StringVar(value=str(current_val))
+                widget = ctk.CTkEntry(f_fields, textvariable=var, width=120)
+
+            widget.grid(row=curr_row, column=1, sticky='e', padx=6, pady=4)
+            self.vars[key] = (var, val_type)
+            curr_row += 1
+
+        # Dialog Buttons
+        f_btn = ctk.CTkFrame(f_main, fg_color="transparent")
+        f_btn.pack(fill=tk.X, padx=10, pady=(10, 4))
+
+        ctk.CTkButton(f_btn, text="Apply", width=80, command=self.apply_params).pack(side=tk.LEFT, padx=3)
+        ctk.CTkButton(f_btn, text="Apply & Fit", width=100, fg_color="#00897b", hover_color="#00695c", command=self.apply_and_fit).pack(side=tk.LEFT, padx=3)
+        ctk.CTkButton(f_btn, text="↺ Defaults", width=90, fg_color="#546e7a", hover_color="#37474f", command=self.reset_to_defaults).pack(side=tk.LEFT, padx=3)
+        ctk.CTkButton(f_btn, text="Close", width=70, fg_color="transparent", border_width=1, command=self.destroy).pack(side=tk.RIGHT, padx=3)
+
+    def reset_to_defaults(self):
+        """Restores default parameters for the currently active detector preset."""
+        preset = self.state.get('detector_preset', 'ELA')
+        myset = self.state.get('myset', None)
+
+        if myset is not None and hasattr(myset, 'PreparePeakDetectionPars'):
+            default_pars = myset.PreparePeakDetectionPars(shortcut=preset)
+        else:
+            default_pars = DEFAULT_PEAK_PARAMS.copy()
+
+        default_pars.setdefault('fit_scale_linear', False)
+        default_pars.setdefault('conv2D', False)
+        default_pars.setdefault('feature_percentile', 0.0)
+        default_pars.setdefault('feature_threshold', 0.5)
+
+        self.state['peak_params'] = default_pars.copy()
+        
+        is_lin = default_pars.get('fit_scale_linear', False)
+        self.app_config['fit_scale_linear'] = is_lin
+        save_config(self.app_config)
+
+        self.var_scale_mode.set("Linear" if is_lin else "Log")
+
+        for key, (var, val_type) in self.vars.items():
+            if key in default_pars:
+                val = default_pars[key]
+                if val_type == bool:
+                    var.set(bool(val))
+                else:
+                    var.set(str(val if val is not None else 0))
+
+    def apply_params(self):
+        is_lin = (self.var_scale_mode.get() == "Linear")
+        self.state['peak_params']['fit_scale_linear'] = is_lin
+
+        self.app_config['fit_scale_linear'] = is_lin
+        save_config(self.app_config)
+
+        for key, (var, val_type) in self.vars.items():
+            val_str = str(var.get()).strip()
+            if val_type == bool:
+                self.state['peak_params'][key] = bool(var.get())
+            elif val_type == int:
+                try:
+                    self.state['peak_params'][key] = int(float(val_str))
+                except ValueError:
+                    pass
+            elif val_type == float:
+                try:
+                    self.state['peak_params'][key] = float(val_str)
+                except ValueError:
+                    pass
+
+    def apply_and_fit(self):
+        self.apply_params()
+        if self.on_apply_callback:
+            self.on_apply_callback()
 
 
 # --- Modal Dialogs ---
@@ -691,6 +974,15 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
 
     ring_presets = config.get("ring_presets", DEFAULT_RING_PRESETS)
 
+    init_preset = config.get("detector_preset", "ELA")
+    if myset is not None and hasattr(myset, 'PreparePeakDetectionPars'):
+        init_peak_params = myset.PreparePeakDetectionPars(shortcut=init_preset)
+    else:
+        init_peak_params = DEFAULT_PEAK_PARAMS.copy()
+
+    # Load persistent fit_scale_linear from config
+    init_peak_params['fit_scale_linear'] = config.get("fit_scale_linear", False)
+
     state = {
         'myset': myset,
         'path': "",
@@ -719,7 +1011,12 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         'ring_presets': ring_presets,
         'bg_sub': False,
         'bg_kernel': config.get("bg_kernel", 15),
-        'calib_active': False
+        'calib_active': False,
+        'detector_preset': init_preset,
+        'peak_params': init_peak_params,
+        'peaks': [],
+        'norm_img': None,
+        'show_stats': False
     }
 
     pan_state = {'active': False, 'ax': None, 'start_x': 0, 'start_y': 0, 'xlim': None, 'ylim': None}
@@ -728,8 +1025,8 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
     def show_about_dialog():
         messagebox.showinfo(
             "About VirtualSTEMExplorerTK",
-            "VirtualSTEMExplorerTK v2.3 (CustomTkinter)\n"
-            "Interactive 4D-STEM Analysis Suite\n\n"
+            "VirtualSTEMExplorerTK v2.5 (CustomTkinter)\n"
+            "Interactive 4D-STEM Analysis Suite with Modular Toolsets\n\n"
             "Copyright © 2026 L. Houben - Weizmann Institute of Science."
         )
 
@@ -781,7 +1078,7 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
     canvas.draw()
     canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    artists = {'ring_patches': [], 'calib_patches': []}
+    artists = {'ring_patches': [], 'calib_patches': [], 'peak_markers': []}
 
     def get_reciprocal_extent(center_x, center_y):
         x_min = -center_x * state['rec_samp']
@@ -839,6 +1136,8 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         target_dict['bg_sub'] = bool(state['bg_sub'])
         target_dict['bg_kernel'] = int(state['bg_kernel'])
         target_dict['mode'] = state['calc_mode']
+        target_dict['peaks'] = list(state['peaks'])
+        target_dict['peak_params'] = dict(state['peak_params'])
         
         scan_x = state.get('scanx', 0)
         target_dict['index'] = int(state['y'] * scan_x + state['x']) if scan_x > 0 else 0
@@ -846,6 +1145,108 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         target_dict['ruler_real_dr'] = float(ruler1_state['length'])
         target_dict['ruler_recip_dq'] = float(ruler2_state['dq'])
         target_dict['ruler_recip_d'] = float(ruler2_state['d_spacing'])
+
+    def redraw_peak_markers():
+        for p in artists['peak_markers']:
+            try: p.remove()
+            except Exception: pass
+        artists['peak_markers'].clear()
+
+        if not state['peaks']: return
+
+        marker_rad = max(0.04, 4.0 * state['rec_samp'])
+        for pt in state['peaks']:
+            circ = Circle((pt['qx'], pt['qy']), radius=marker_rad, edgecolor='#ff1744',
+                          facecolor='none', linewidth=1.5, alpha=0.9)
+            ax2.add_patch(circ)
+            artists['peak_markers'].append(circ)
+
+    def update_diffraction_statistics():
+        if state['norm_img'] is None or 'stats_box' not in artists:
+            return
+
+        if not state['show_stats']:
+            artists['stats_box'].set_visible(False)
+            return
+
+        img = state['norm_img']
+        d_min, d_max = float(np.min(img)), float(np.max(img))
+        d_mean, d_std = float(np.mean(img)), float(np.std(img))
+        p50, p65, p90, p99 = np.percentile(img, [50, 65, 90, 99])
+
+        txt = (
+            f"Image Statistics:\n"
+            f"Min: {d_min:.3e}  Max: {d_max:.3e}\n"
+            f"Mean: {d_mean:.3e}  Std: {d_std:.3e}\n"
+            f"p50: {p50:.3e}  p65: {p65:.3e}\n"
+            f"p90: {p90:.3e}  p99: {p99:.3e}"
+        )
+        artists['stats_box'].set_text(txt)
+        artists['stats_box'].set_visible(True)
+
+    def run_peak_detection():
+        if state['myset'] is None:
+            messagebox.showwarning("No Dataset", "Please load a dataset before running peak detection.")
+            return
+
+        try:
+            if state['norm_img'] is None:
+                refresh_spatial_roi()
+
+            norm_img = state['norm_img'].copy()
+            if norm_img is None:
+                return
+
+            use_lin = state['peak_params'].get('fit_scale_linear', False)
+            peaklist = PeakDetection(norm_img, params=state['peak_params'], origin=state['right_origin'], lin=use_lin)
+
+            state['peaks'].clear()
+            geom_cx = state['detx'] / 2.0
+            geom_cy = state['dety'] / 2.0
+
+            if peaklist:
+                res_dict = peaklist[0] if isinstance(peaklist, list) else peaklist
+                px_rel_x = np.atleast_1d(res_dict.get('x', []))
+                px_rel_y = np.atleast_1d(res_dict.get('y', []))
+
+                for rx, ry in zip(px_rel_x, px_rel_y):
+                    det_px_x = rx + geom_cx
+                    det_px_y = ry + geom_cy
+
+                    qx = (det_px_x - state['cqx']) * state['rec_samp']
+                    if state['right_origin'] == 'upper':
+                        qy = (state['cqy'] - det_px_y) * state['rec_samp']
+                    else:
+                        qy = (det_px_y - state['cqy']) * state['rec_samp']
+
+                    state['peaks'].append({'qx': float(qx), 'qy': float(qy)})
+
+            redraw_peak_markers()
+            sync_target_dict()
+            canvas.draw_idle()
+            scale_str = "Linear" if use_lin else "Log"
+            lbl_status.configure(text=f"Detected {len(state['peaks'])} diffraction peaks ({state['detector_preset']}, {scale_str}).")
+
+        except Exception as e:
+            messagebox.showerror("Peak Detection Error", f"Failed to execute peak detection:\n{e}")
+
+    def clear_peak_detection():
+        state['peaks'].clear()
+        redraw_peak_markers()
+        sync_target_dict()
+        canvas.draw_idle()
+        lbl_status.configure(text="Diffraction peaks cleared.")
+
+    peak_dialog_ref = [None]
+
+    def open_peak_params_dialog():
+        if peak_dialog_ref[0] is not None and peak_dialog_ref[0].winfo_exists():
+            peak_dialog_ref[0].lift()
+            peak_dialog_ref[0].focus()
+            return
+        
+        dlg = PeakDetectionConfigDialog(root, state, config, on_apply_callback=run_peak_detection)
+        peak_dialog_ref[0] = dlg
 
     def compute_virtual_image(center_qx, center_qy, radius_in, radius_out, mode='Sum'):
         dety, detx = state['myset'].dim[2], state['myset'].dim[3]
@@ -887,7 +1288,13 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         x_min = max(0, center_x - radius_x)
         x_max = min(state['scanx'], center_x + radius_x + 1)
         
-        avg_slice = np.mean(state['myset'].data[y_min:y_max, x_min:x_max, :, :], axis=(0, 1)).astype(np.float64)
+        raw_slice = state['myset'].data[y_min:y_max, x_min:x_max, :, :].astype(np.float64)
+        n_frames = (2 * radius_x + 1) * (2 * radius_y + 1)
+        
+        norm_avg = np.sum(raw_slice, axis=(0, 1)) / max(1, n_frames)
+        state['norm_img'] = norm_avg
+
+        avg_slice = norm_avg.copy()
 
         if state['bg_sub']:
             det_x = state['myset'].dim[3]
@@ -986,6 +1393,7 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         gamma = float(var_r_gamma.get())
         processed = apply_contrast(state['data_right_raw'], (c_low, c_high), gamma)
         artists['im2'].set_data(processed)
+        update_diffraction_statistics()
         canvas.draw_idle()
 
     def refresh_detector_mask():
@@ -1102,7 +1510,15 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
                                            fontsize=9, bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="cyan", alpha=0.8))
         artists['ruler2_text'].set_visible(False)
 
+        # On-Screen Image Statistics Overlay
+        artists['stats_box'] = ax2.text(0.03, 0.05, "", transform=ax2.transAxes, color='white',
+                                        fontsize=8, fontfamily="monospace",
+                                        bbox=dict(boxstyle="round,pad=0.4", fc="black", ec="#00e5ff", alpha=0.85))
+        artists['stats_box'].set_visible(False)
+
         redraw_ring_markers()
+        redraw_peak_markers()
+        update_diffraction_statistics()
 
         next_idx, _ = get_next_filename()
         btn_save.configure(text=f"Export Fig #{next_idx:03d}")
@@ -1233,10 +1649,6 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
                         ruler1_state['length'] = dr
                         sync_target_dict()
                         artists['ruler1_text'].set_text(f"Δr = {dr:.3f} nm\n({dr/state['re_samp']:.1f} px)")
-                        
-                        # Auto-deactivate ruler once Point B is set
-                        ruler1_state['active'] = False
-                        btn_r1.configure(text="Ruler Real", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
                     canvas.draw_idle()
                     return
 
@@ -1266,10 +1678,6 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
                         ruler2_state['d_spacing'] = d_spacing
                         sync_target_dict()
                         artists['ruler2_text'].set_text(f"Δq = {dq:.4f} 1/nm\nd = {d_spacing:.4f} nm")
-                        
-                        # Auto-deactivate ruler once Point B is set
-                        ruler2_state['active'] = False
-                        btn_r2.configure(text="Ruler Recip", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
                     canvas.draw_idle()
                     return
 
@@ -1321,6 +1729,35 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
     def on_motion(event):
         if state['myset'] is None: return
 
+        # Live Mouse Coordinate & Intensity Readout
+        if event.inaxes == ax1 and event.xdata is not None and event.ydata is not None:
+            phys_x, phys_y = event.xdata, event.ydata
+            px_x = int(np.clip(phys_x / state['re_samp'], 0, state['scanx'] - 1))
+            if state['left_origin'] == 'upper':
+                px_y = int(np.clip(state['scany'] - 1 - (phys_y / state['re_samp']), 0, state['scany'] - 1))
+            else:
+                px_y = int(np.clip(phys_y / state['re_samp'], 0, state['scany'] - 1))
+
+            intensity = state['data_left_raw'][px_y, px_x] if 'data_left_raw' in state and state['data_left_raw'] is not None else 0.0
+            lbl_status.configure(
+                text=f"Real View: [x: {phys_x:.2f} nm, y: {phys_y:.2f} nm] | Pixel: ({px_y}, {px_x}) | Value: {intensity:.3e}"
+            )
+
+        elif event.inaxes == ax2 and event.xdata is not None and event.ydata is not None:
+            qx, qy = event.xdata, event.ydata
+            det_x = int(np.clip(qx / state['rec_samp'] + state['cqx'], 0, state['detx'] - 1))
+            if state['right_origin'] == 'upper':
+                det_y = int(np.clip(state['cqy'] - (qy / state['rec_samp']), 0, state['dety'] - 1))
+            else:
+                det_y = int(np.clip(qy / state['rec_samp'] + state['cqy'], 0, state['dety'] - 1))
+
+            intensity = state['norm_img'][det_y, det_x] if state['norm_img'] is not None else 0.0
+            d_spacing = 1.0 / np.hypot(qx, qy) if np.hypot(qx, qy) > 1e-6 else np.inf
+            lbl_status.configure(
+                text=f"Recip View: [qx: {qx:.3f}, qy: {qy:.3f} 1/nm] (d: {d_spacing:.3f} nm) | Det: ({det_y}, {det_x}) | I: {intensity:.3e}"
+            )
+
+        # Mouse Panning Logic
         if pan_state['active'] and pan_state['ax'] == event.inaxes and event.x is not None and event.y is not None:
             ax = pan_state['ax']
             dx_pixels = event.x - pan_state['start_x']
@@ -1340,6 +1777,7 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
             canvas.draw_idle()
             return
 
+        # Ruler live drag updates
         if ruler1_state['active'] and ruler1_state['p1'] is not None and ruler1_state['p2'] is None:
             if event.inaxes == ax1:
                 p1 = ruler1_state['p1']
@@ -1472,6 +1910,11 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
 
                 new_set.LoadFile(res['full_path'], type=state['format_type'], **args)
                 state['myset'] = new_set
+
+                preset = state['detector_preset']
+                if hasattr(new_set, 'PreparePeakDetectionPars'):
+                    state['peak_params'] = new_set.PreparePeakDetectionPars(shortcut=preset)
+                    state['peak_params']['fit_scale_linear'] = config.get("fit_scale_linear", False)
 
                 if os.path.exists(config["cal_db_path"]):
                     cal_mgr = nbed.MicroscopeCalibrationManager(config["cal_db_path"])
@@ -1712,14 +2155,23 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
 
     ctk.CTkButton(f_params, text="Set Mask", width=55, command=set_mask_cmd).grid(row=2, column=4, padx=4)
 
-    # 5. Measurement Tools
-    f_tools = ctk.CTkFrame(ctrl_frame)
-    f_tools.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
-    ctk.CTkLabel(f_tools, text="Measurement Tools", font=("Arial", 11, "bold")).grid(row=0, column=0, columnspan=3, pady=(4,2))
+    # 5. Modular Tabview: Measurement, Peaks and Orientation, Processing, & Export
+    tab_tools = ctk.CTkTabview(ctrl_frame, width=390, height=135)
+    tab_tools.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=4, pady=2)
+    tab_tools.add("Measurement")
+    tab_tools.add("Peaks and Orientation")
+    tab_tools.add("Processing")
+    tab_tools.add("Export")
 
-    btn_r1 = ctk.CTkButton(f_tools, text="Ruler Real", width=75)
-    btn_r2 = ctk.CTkButton(f_tools, text="Ruler Recip", width=75)
-    btn_calib = ctk.CTkButton(f_tools, text="📐 Calib", width=60, fg_color="#f57c00", hover_color="#e65100", command=open_distortion_calib_dialog_action)
+    # --- TAB 1: Measurement ---
+    tab_m = tab_tools.tab("Measurement")
+    
+    f_m_top = ctk.CTkFrame(tab_m, fg_color="transparent")
+    f_m_top.pack(fill=tk.X, pady=(2, 2))
+
+    btn_r1 = ctk.CTkButton(f_m_top, text="Ruler Real", width=80)
+    btn_r2 = ctk.CTkButton(f_m_top, text="Ruler Recip", width=80)
+    btn_calib = ctk.CTkButton(f_m_top, text="📐 Calib", width=65, fg_color="#f57c00", hover_color="#e65100", command=open_distortion_calib_dialog_action)
 
     def toggle_ruler1():
         if state['myset'] is None: return
@@ -1754,17 +2206,17 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
 
     btn_r1.configure(command=toggle_ruler1)
     btn_r2.configure(command=toggle_ruler2)
-    btn_r1.grid(row=1, column=0, padx=2, pady=2)
-    btn_r2.grid(row=1, column=1, padx=2, pady=2)
-    btn_calib.grid(row=1, column=2, padx=2, pady=2)
+    btn_r1.pack(side=tk.LEFT, padx=3)
+    btn_r2.pack(side=tk.LEFT, padx=3)
+    btn_calib.pack(side=tk.LEFT, padx=3)
 
-    # Reciprocal Ring Overlay Controls
-    f_rings = ctk.CTkFrame(f_tools, fg_color="transparent")
-    f_rings.grid(row=2, column=0, columnspan=3, pady=(4, 2))
+    # Rings sub-row
+    f_rings = ctk.CTkFrame(tab_m, fg_color="transparent")
+    f_rings.pack(fill=tk.X, pady=(2, 2))
 
-    ctk.CTkLabel(f_rings, text="Ring q (1/nm):").pack(side=tk.LEFT, padx=2)
+    ctk.CTkLabel(f_rings, text="q:").pack(side=tk.LEFT, padx=2)
     var_ring_q = ctk.StringVar(value="2.571")
-    ctk.CTkEntry(f_rings, textvariable=var_ring_q, width=52).pack(side=tk.LEFT, padx=2)
+    ctk.CTkEntry(f_rings, textvariable=var_ring_q, width=48).pack(side=tk.LEFT, padx=2)
 
     def add_ring_marker_cmd():
         try:
@@ -1793,24 +2245,65 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         f_rings, 
         variable=var_preset_sel, 
         values=preset_keys if preset_keys else ["None"], 
-        width=110, 
+        width=100, 
         command=on_preset_dropdown_select,
         font=("Arial", 10)
     )
 
-    ctk.CTkButton(f_rings, text="➕ Add", width=42, command=add_ring_marker_cmd).pack(side=tk.LEFT, padx=2)
+    ctk.CTkButton(f_rings, text="+", width=28, command=add_ring_marker_cmd).pack(side=tk.LEFT, padx=2)
     cb_preset_menu.pack(side=tk.LEFT, padx=2)
-    ctk.CTkButton(f_rings, text="🗑️ Clear", width=52, fg_color="#d32f2f", hover_color="#9a0007", command=clear_ring_markers_cmd).pack(side=tk.LEFT, padx=2)
+    ctk.CTkButton(f_rings, text="🗑️", width=32, fg_color="#d32f2f", hover_color="#9a0007", command=clear_ring_markers_cmd).pack(side=tk.LEFT, padx=2)
 
-    # 6. Dedicated Processing Menu
-    f_proc = ctk.CTkFrame(ctrl_frame)
-    f_proc.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
-    ctk.CTkLabel(f_proc, text="Processing", font=("Arial", 11, "bold")).grid(row=0, column=0, columnspan=3, pady=(4,2))
+    # --- TAB 2: Peaks and Orientation ---
+    tab_p = tab_tools.tab("Peaks and Orientation")
+    
+    f_p_top = ctk.CTkFrame(tab_p, fg_color="transparent")
+    f_p_top.pack(fill=tk.X, pady=(2, 2))
 
-    btn_align = ctk.CTkButton(f_proc, text="🎯 Align Beam", width=120, fg_color="#2e7d32", hover_color="#1b5e20", command=align_diffraction_centers)
-    btn_align.grid(row=1, column=0, columnspan=3, padx=4, pady=2)
+    var_det_preset = ctk.StringVar(value=state['detector_preset'])
 
-    # Display-Only Background Subtraction Controls
+    def on_det_preset_change(choice):
+        state['detector_preset'] = choice
+        config['detector_preset'] = choice
+        save_config(config)
+        if state['myset'] is not None and hasattr(state['myset'], 'PreparePeakDetectionPars'):
+            state['peak_params'] = state['myset'].PreparePeakDetectionPars(shortcut=choice)
+            state['peak_params']['fit_scale_linear'] = config.get("fit_scale_linear", False)
+
+    cb_det_preset = ctk.CTkOptionMenu(f_p_top, variable=var_det_preset, values=["ELA", "ARINA", "EMPAD"], width=95, command=on_det_preset_change)
+    cb_det_preset.pack(side=tk.LEFT, padx=2)
+
+    btn_edit_params = ctk.CTkButton(f_p_top, text="⚙️ Params", width=75, fg_color="#37474f", hover_color="#263238", command=open_peak_params_dialog)
+    btn_edit_params.pack(side=tk.LEFT, padx=2)
+
+    var_show_stats = tk.BooleanVar(value=state['show_stats'])
+
+    def on_toggle_stats():
+        state['show_stats'] = var_show_stats.get()
+        update_diffraction_statistics()
+        canvas.draw_idle()
+
+    chk_stats = ctk.CTkSwitch(f_p_top, text="Stats", variable=var_show_stats, command=on_toggle_stats, font=("Arial", 10), width=50)
+    chk_stats.pack(side=tk.LEFT, padx=4)
+
+    f_p_bot = ctk.CTkFrame(tab_p, fg_color="transparent")
+    f_p_bot.pack(fill=tk.X, pady=(2, 2))
+
+    btn_fit_peaks = ctk.CTkButton(f_p_bot, text="🔍 Fit Peaks", width=95, fg_color="#00897b", hover_color="#00695c", command=run_peak_detection)
+    btn_fit_peaks.pack(side=tk.LEFT, padx=2)
+
+    btn_clear_peaks = ctk.CTkButton(f_p_bot, text="🗑️ Clear", width=70, fg_color="#c62828", hover_color="#8e0000", command=clear_peak_detection)
+    btn_clear_peaks.pack(side=tk.LEFT, padx=2)
+
+    # --- TAB 3: Processing ---
+    tab_pr = tab_tools.tab("Processing")
+
+    f_pr_row1 = ctk.CTkFrame(tab_pr, fg_color="transparent")
+    f_pr_row1.pack(fill=tk.X, pady=(2, 2))
+
+    btn_align = ctk.CTkButton(f_pr_row1, text="🎯 Align Beam", width=115, fg_color="#2e7d32", hover_color="#1b5e20", command=align_diffraction_centers)
+    btn_align.pack(side=tk.LEFT, padx=2)
+
     var_bg_sub = tk.BooleanVar(value=state['bg_sub'])
     var_bg_kernel = ctk.StringVar(value=str(state['bg_kernel']))
 
@@ -1828,22 +2321,23 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         sync_target_dict()
         refresh_spatial_roi()
 
-    chk_bg = ctk.CTkCheckBox(f_proc, text="Sub BG", variable=var_bg_sub, command=on_bg_sub_toggle, font=("Arial", 10), width=65)
-    chk_bg.grid(row=2, column=0, padx=2, pady=2, sticky='w')
+    chk_bg = ctk.CTkCheckBox(f_pr_row1, text="Sub BG", variable=var_bg_sub, command=on_bg_sub_toggle, font=("Arial", 10), width=65)
+    chk_bg.pack(side=tk.LEFT, padx=4)
 
-    ctk.CTkLabel(f_proc, text="k:").grid(row=2, column=1, sticky='e', padx=1)
-    entry_kernel = ctk.CTkEntry(f_proc, textvariable=var_bg_kernel, width=38)
-    entry_kernel.grid(row=2, column=2, padx=2, pady=2, sticky='w')
+    f_pr_row2 = ctk.CTkFrame(tab_pr, fg_color="transparent")
+    f_pr_row2.pack(fill=tk.X, pady=(2, 2))
+
+    ctk.CTkLabel(f_pr_row2, text="BG Filter Kernel k:").pack(side=tk.LEFT, padx=2)
+    entry_kernel = ctk.CTkEntry(f_pr_row2, textvariable=var_bg_kernel, width=42)
+    entry_kernel.pack(side=tk.LEFT, padx=2)
 
     def apply_proc_param_change(*args):
         if state['bg_sub']: on_bg_sub_toggle()
 
     var_bg_kernel.trace_add("write", apply_proc_param_change)
 
-    # 7. Publication Export Menu
-    f_export = ctk.CTkFrame(ctrl_frame)
-    f_export.pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
-    ctk.CTkLabel(f_export, text="Export Menu", font=("Arial", 11, "bold")).pack(pady=(4, 2))
+    # --- TAB 4: Export ---
+    tab_exp = tab_tools.tab("Export")
 
     var_export_markers = tk.BooleanVar(value=config.get("export_markers", True))
 
@@ -1851,14 +2345,17 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         config['export_markers'] = var_export_markers.get()
         save_config(config)
 
+    f_exp_row1 = ctk.CTkFrame(tab_exp, fg_color="transparent")
+    f_exp_row1.pack(fill=tk.X, pady=(2, 2))
+
     chk_exp_markers = ctk.CTkCheckBox(
-        f_export, 
+        f_exp_row1, 
         text="Include Markers", 
         variable=var_export_markers, 
         command=on_export_markers_toggle,
         font=("Arial", 10)
     )
-    chk_exp_markers.pack(padx=6, pady=(2, 4))
+    chk_exp_markers.pack(side=tk.LEFT, padx=4)
 
     def save_figure_callback():
         if state['myset'] is None:
@@ -1881,6 +2378,7 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         if 'ruler2_text' in artists and ruler2_state['active']: overlay_artists.append(artists['ruler2_text'])
         overlay_artists.extend(artists.get('ring_patches', []))
         overlay_artists.extend(artists.get('calib_patches', []))
+        overlay_artists.extend(artists.get('peak_markers', []))
 
         saved_visibilities = [art.get_visible() for art in overlay_artists]
 
@@ -1904,8 +2402,8 @@ def VirtualSTEMExplorerCTK(myset=None, initial_filepath=None, initial_format=Non
         btn_save.configure(text=f"Export Fig #{next_idx_new:03d}")
         messagebox.showinfo("Export Success", f"Successfully exported:\n{filename}\n(Include Markers: {include_markers})")
 
-    btn_save = ctk.CTkButton(f_export, text="Export Fig #001", width=120, command=save_figure_callback)
-    btn_save.pack(padx=8, pady=(2, 8))
+    btn_save = ctk.CTkButton(f_exp_row1, text="Export Fig #001", width=120, command=save_figure_callback)
+    btn_save.pack(side=tk.LEFT, padx=8)
 
     root.mainloop()
     return target_dict
@@ -1916,4 +2414,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
