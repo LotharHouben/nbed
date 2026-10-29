@@ -136,7 +136,7 @@ class MicroscopeCalibrationManager:
                         print(f"Reciprocal-Space Calibration: FOV = {qscale:.2f} 1/nm, Raw = {raw_qsamp:.4f} (1/nm)/px, Binned ({bin_det_x}x) = {qsamp:.4f} (1/nm)/px ({source})")
 
             elif type == 'PantaRhei':
-                instrument = str(md.get("microscope.name", "Unknown"))
+                instrument = str(md.get("microscope.name", "TFSTemScriptAndKernel"))
                 device = str(md.get("source.name", "Unknown"))
                 cl = float(md.get('projector.camera_length', 0.0)) * 1000.0  # m to mm
                 mag = float(md.get('scan_driver.magnification', 1.0))

@@ -16,6 +16,7 @@ import mrcfile
 import json
 import io
 import zipfile
+import ast
 
 
 
@@ -95,7 +96,7 @@ class pyNBED:
                 # Handles 1D string array like array(['[{...}]'], dtype='<U5548')
                 try:
                     str_val = str(val[0])
-                    data_parsed = json.loads(str_val)
+                    data_parsed = ast.literal_eval(str_val)
                     self.metadata = data_parsed[0] if isinstance(data_parsed, list) else data_parsed
                 except (json.JSONDecodeError, IndexError):
                     self.metadata = {}
