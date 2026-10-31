@@ -23,8 +23,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14"
+  "Programming Language :: Python :: 3.13"
 ]
 
 
@@ -45,7 +44,10 @@ dependencies = [
     "ipython",
     "ipywidgets",
     "pims>=0.7",
-    "customtkinter"
+    "customtkinter",
+    "py4Dstem>=0.14.0",
+    "tifffile",
+    "colorcet"
 ]
 
 

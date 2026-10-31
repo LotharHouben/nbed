@@ -54,6 +54,10 @@ Please refer to the jupyter notebooks with examples in the directory 'examples' 
 
 The notebooks use a demonstration data set that is available under https://doi.org/10.5281/zenodo.15212905 
 
+
+### VirtualSTEMExplorer
+
 Another programatic example for the use of nbed is the standalone suite VirtualSTEMExplorerTK in the subdirectory tools.
-VirtualSTEMExplorer is a GUI tool to explore virtual images and diffraction, measure spacings, and export publication ready images. It laods DECTRIS HDF5 data files, PantaRhei .prz files and compressed PantaRhei files *.prz.zip that were compressed with a ZIP archive utility. 
+
+VirtualSTEMExplorer is a GUI tool to explore virtual images and diffraction, measure spacings, and export publication ready images. It performs peak fitting and indexing against a CIF database file, strain and orientation mapping.  It laods DECTRIS HDF5 data files, PantaRhei .prz files, compressed PantaRhei files *.prz.zip that were compressed with a ZIP archive utility, and EMPAD I data. For further details refer to the User Manual that is available from the tools directory. 
 

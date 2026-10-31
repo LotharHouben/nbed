@@ -116,7 +116,8 @@ class MicroscopeCalibrationManager:
                 mag = float(md['electron_microscope']['illumination_system']['scan_magnification'])
                 mode = to_str(md['electron_microscope']['illumination_system']['mode'])
                 voltage = int(md['electron_microscope']['electron_source']['accelerating_voltage'])
-
+            
+                print(f"[CALMGR] Instrument: {instrument}, Device: {device}, Mode: {mode}, Voltage: {voltage}, CL: {cl}, Mag: {mag} ")
                 # Real-Space Sampling Calculation
                 if self.set_current_table(instrument, device, voltage, mode, submode="Microprobe", imaging_type="Magnification"):
                     scale, source = self.get_scale_from_current_table(mag)
@@ -137,14 +138,14 @@ class MicroscopeCalibrationManager:
 
             elif type == 'PantaRhei':
                 instrument = str(md.get("microscope.name", "TFSTemScriptAndKernel"))
-                device = str(md.get("source.name", "Unknown"))
+                device = str(md.get("source.name", "ELA"))
                 cl = float(md.get('projector.camera_length', 0.0)) * 1000.0  # m to mm
                 mag = float(md.get('scan_driver.magnification', 1.0))
                 submode = str(md.get('condenser.mode', 'Microprobe'))
                 mode = 'STEM'
                 subsetting = str(md.get('filter.esi-mag', ''))
                 voltage = int(md.get("electron_gun.voltage", 300000))
-
+                print(f"[CALMGR] Instrument: {instrument}, Device: {device}, Mode: {mode}, Submode: {submode}, Subsetting:{subsetting}, Voltage: {voltage}, CL: {cl}, Mag: {mag} ")
                 # Real-Space Sampling Calculation
                 if self.set_current_table(instrument, device, voltage, mode, submode=submode, subsetting=subsetting, imaging_type="Magnification"):
                     scale, source = self.get_scale_from_current_table(mag)
