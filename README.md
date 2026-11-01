@@ -30,6 +30,9 @@ You can use pip to install nbed into your preferred environment.
 
       python -m pip install git+https://github.com/LotharHouben/nbed.git@main
 
+- The package ase is not available in the standard anaconda repository, please install it manually:
+
+      conda install -c conda-forge ase
 
 
 ## Test Your Installation
@@ -55,7 +58,7 @@ Please refer to the jupyter notebooks with examples in the directory 'examples' 
 The notebooks use a demonstration data set that is available under https://doi.org/10.5281/zenodo.15212905 
 
 
-### VirtualSTEMExplorer
+## VirtualSTEMExplorer
 
 Another programatic example for the use of nbed is the standalone suite VirtualSTEMExplorerTK in the subdirectory tools.
 
